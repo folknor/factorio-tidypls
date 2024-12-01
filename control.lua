@@ -357,20 +357,6 @@ local function tidypls()
 	for j = #nets, 1, -1 do
 		local net = nets[j]
 		log(LOG_NETWORK, net.id)
-		-- {
-		--     id = nid,
-		--     surface = roboport.surface.index,
-		--     ports = {
-		--         {
-		--             roboport = roboport,
-		--             radius = 3,
-		--             pattern = pattern,
-		--             item = it,
-		--         }
-		--     },
-		--     items = {},
-		--     bots = available construction bots,
-		-- }
 
 		for i = #net.ports, 1, -1 do
 			if not validPort(net.ports[i].roboport) or net.ports[i].roboport.logistic_network.network_id ~= net.id then
@@ -405,6 +391,7 @@ local function tidypls()
 				end
 
 				if any then
+					-- utoxin pls what is this
 					if first.force.max_successful_attempts_per_tick_per_construction_queue * 60 < net.bots then
 						first.force.max_successful_attempts_per_tick_per_construction_queue = math.floor(net.bots / 60)
 					end
@@ -412,32 +399,33 @@ local function tidypls()
 					-- First check if we can expand at all
 					for _, port in next, net.ports do
 						if not port.doneExpanding and port.maxEnergy == port.roboport.energy then
+							local roboport = port.roboport
 							-- Dont do anything if there's any ghosts in the build area
 							if net.surface.count_entities_filtered({
 									area = port.buildArea,
 									name = TYPE_TILE_GHOST,
-									force = port.roboport.force,
+									force = roboport.force,
 								}) == 0 then
-								expanded[port.roboport] = tidyExpand(net, port.buildArea, port.roboport.force)
+								expanded[roboport] = tidyExpand(net, port.buildArea, roboport.force)
 
-								if not expanded[port.roboport] then
-									if port.radius < port.roboport.logistic_cell.construction_radius then
-										log(LOG_RADIUS_INCREASED, port.roboport.backer_name)
+								if not expanded[roboport] then
+									if port.radius < roboport.logistic_cell.construction_radius then
+										log(LOG_RADIUS_INCREASED, roboport.backer_name)
 										port.radius = port.radius + 1
 										port.buildArea = {
-											{ port.roboport.position.x - port.radius, port.roboport.position.y - port.radius, },
-											{ port.roboport.position.x + port.radius, port.roboport.position.y + port.radius, },
+											{ roboport.position.x - port.radius, roboport.position.y - port.radius, },
+											{ roboport.position.x + port.radius, roboport.position.y + port.radius, },
 										}
 										-- Dont upgrade around this roboport.
 										-- The mod has probably been added to the game mid-run
-										expanded[port.roboport] = true
+										expanded[roboport] = true
 									else
 										-- Roboport is done expanding.
 										port.doneExpanding = true
-										log(LOG_DONE_EXPANDING, port.roboport.backer_name)
+										log(LOG_DONE_EXPANDING, roboport.backer_name)
 									end
 								else
-									log(LOG_EXPANDED, port.roboport.backer_name, net.bots)
+									log(LOG_EXPANDED, roboport.backer_name, net.bots)
 								end
 
 								if net.bots < 1 then break end
