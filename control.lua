@@ -33,6 +33,7 @@ local LOG_DONE_EXPANDING = " - Roboport done expanding: %s"
 local LOG_EXPANDED = " - Expanded port %s: %d bots remaining"
 local LOG_UPGRADED = " - Upgraded port %s: %d bots remaining"
 local LOG_DONE = " - Roboport is done: %s"
+local LOG_DISABLED = "Tidying has been disabled for this network."
 
 ---@param var string
 ---@param ... string|number
@@ -62,6 +63,9 @@ local ITEM_EXPLOSIVES = { name = TYPE_EXPLOSIVES, quality = "normal", }
 local ITEM_CONCRETE = { name = TYPE_CONCRETE, quality = "normal", }
 local ITEM_BRICK = { name = TYPE_BRICK, quality = "normal", }
 local ITEM_REFINED = { name = TYPE_REFINED, quality = "normal", }
+
+local C_LUA_EVENT = "folk-tidypls-toggle"
+local C_TECH_ENABLE = "folk-tidypls"
 
 ---@class TidyPort
 ---@field roboport LuaEntity
@@ -371,6 +375,19 @@ local function tidypls()
 			log(LOG_NUMPORTS, #net.ports)
 
 			local first = net.ports[1].roboport
+			local researched = first.force.technologies[C_TECH_ENABLE] and
+				first.force.technologies[C_TECH_ENABLE].researched
+
+			local enabled = false
+			for _, player in pairs(game.players) do
+				if player.force == first.force then
+					enabled = player.is_shortcut_toggled(C_LUA_EVENT)
+					break
+				end
+			end
+			if not enabled then
+				log(LOG_DISABLED)
+			end
 
 			local available = first.logistic_network.available_construction_robots
 			local total = first.logistic_network.all_construction_robots
@@ -380,7 +397,7 @@ local function tidypls()
 			net.bots = math.floor(total * 0.1)
 			log(LOG_NUMBOTS, net.bots)
 
-			if net.bots > 0 then
+			if net.bots > 0 and researched and enabled then
 				local any = false
 
 				for _, item in next, countItems do
@@ -516,3 +533,44 @@ script.on_event(defines.events.script_raised_revive, built)
 script.on_nth_tick(30 * 60, tidypls)
 script.on_init(initTidyPls)
 script.on_configuration_changed(initTidyPls)
+
+local INFO_TOGGLED_FORCE = { "folk-tidypls.enabled-force", }
+local INFO_TOGGLED_BY = "folk-tidypls.enabled-by"
+
+local function keyCombo(event)
+	local clicker = game.players[event.player_index]
+	if not clicker or not clicker.valid then return end
+
+	-- You can toggle it with the keyboard shortcut even if it's not researched so we check
+	local researched = clicker.force.technologies[C_TECH_ENABLE] and clicker.force.technologies[C_TECH_ENABLE]
+		.researched
+	if not researched then return end
+
+	local state = clicker.is_shortcut_toggled(C_LUA_EVENT)
+	for _, pl in pairs(game.players) do
+		if pl.force == clicker.force then
+			pl.set_shortcut_toggled(C_LUA_EVENT, not state)
+			pl.print({ INFO_TOGGLED_BY, clicker.name, })
+		end
+	end
+end
+
+script.on_event(C_LUA_EVENT, keyCombo)
+script.on_event(defines.events.on_lua_shortcut, function(event)
+	---@cast event OnLuaShortcut
+	if not event or event.prototype_name ~= C_LUA_EVENT then return end
+	keyCombo(event)
+end)
+
+script.on_event(defines.events.on_research_finished, function(event)
+	---@cast event OnResearchFinished
+	if event.research.name == C_TECH_ENABLE then
+		for _, pl in pairs(game.players) do
+			if pl.force == event.research.force then
+				pl.set_shortcut_toggled(C_LUA_EVENT, true)
+				pl.print(INFO_TOGGLED_FORCE)
+			end
+		end
+	end
+	-- XXX reset everything because of 3rd party mods
+end)
