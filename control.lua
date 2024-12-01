@@ -143,13 +143,15 @@ local function getTidyNetworkByNID(nid, surface)
 	end
 
 	if index == -1 then
-		table.insert(nets, {
+		---@type TidyNetwork
+		local skynet = {
 			id = nid,
 			surface = surface,
 			ports = {},
 			items = {},
 			bots = 0,
-		})
+		}
+		table.insert(nets, skynet)
 		index = #nets
 	end
 	return nets[index]
@@ -160,51 +162,63 @@ local function addPorts(...)
 		---@type LuaEntity
 		local roboport = (select(i, ...))
 		if validPort(roboport) then
-			local nid = roboport.logistic_network.network_id
-
-			-- XXX reset upgradeAreas on tech research
-			local max = roboport.logistic_cell.construction_radius
-			local maxArea = {
-				{ roboport.position.x - max, roboport.position.y - max, },
-				{ roboport.position.x + max, roboport.position.y + max, },
-			}
-
-			local expansionFilter = {
-				has_hidden_tile = false,
-				collision_mask = MASK_GROUND_TILE,
-				area = maxArea,
-			}
-			local possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
-			if possibleExpansions == 0 then
-				expansionFilter.has_hidden_tile = true
-				expansionFilter.name = TYPE_LANDFILL
-				possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
+			local already = false
+			-- Check to see that this roboport is not part of any existing network
+			for _, net in next, storage.networks do
+				for _, p in next, net.ports do
+					if p.roboport and p.roboport.valid and p.roboport.unit_number == roboport.unit_number then
+						already = true
+						break
+					end
+				end
+				if already then break end
 			end
-
-			local possibleUpgrades = roboport.surface.count_tiles_filtered({
-				collision_mask = MASK_GROUND_TILE,
-				name = { TYPE_PATH, TYPE_CONCRETE, },
-				area = maxArea,
-			})
-
-			if possibleExpansions > 0 or possibleUpgrades > 0 then
-				local net = getTidyNetworkByNID(nid, roboport.surface)
-
-				---@type TidyPort
-				local port = {
-					roboport = roboport,
-					radius = 3,
-					doneUpgrading = (possibleUpgrades == 0),
-					doneExpanding = (possibleExpansions == 0),
-					maxEnergy = roboport.prototype.electric_energy_source_prototype.buffer_capacity,
-					upgradeArea = maxArea,
-					buildArea = {
-						{ roboport.position.x - 3, roboport.position.y - 3, },
-						{ roboport.position.x + 3, roboport.position.y + 3, },
-					},
+			if not already then
+				-- XXX reset upgradeAreas on tech research
+				local max = roboport.logistic_cell.construction_radius
+				local maxArea = {
+					{ roboport.position.x - max, roboport.position.y - max, },
+					{ roboport.position.x + max, roboport.position.y + max, },
 				}
 
-				table.insert(net.ports, port)
+				local expansionFilter = {
+					has_hidden_tile = false,
+					collision_mask = MASK_GROUND_TILE,
+					area = maxArea,
+				}
+				local possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
+				if possibleExpansions == 0 then
+					expansionFilter.has_hidden_tile = true
+					expansionFilter.name = TYPE_LANDFILL
+					possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
+				end
+
+				local possibleUpgrades = roboport.surface.count_tiles_filtered({
+					collision_mask = MASK_GROUND_TILE,
+					name = { TYPE_PATH, TYPE_CONCRETE, },
+					area = maxArea,
+				})
+
+				if possibleExpansions > 0 or possibleUpgrades > 0 then
+					local nid = roboport.logistic_network.network_id
+					local net = getTidyNetworkByNID(nid, roboport.surface)
+
+					---@type TidyPort
+					local port = {
+						roboport = roboport,
+						radius = 3,
+						doneUpgrading = (possibleUpgrades == 0),
+						doneExpanding = (possibleExpansions == 0),
+						maxEnergy = roboport.prototype.electric_energy_source_prototype.buffer_capacity,
+						upgradeArea = maxArea,
+						buildArea = {
+							{ roboport.position.x - 3, roboport.position.y - 3, },
+							{ roboport.position.x + 3, roboport.position.y + 3, },
+						},
+					}
+
+					table.insert(net.ports, port)
+				end
 			end
 		end
 	end
