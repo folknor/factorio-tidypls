@@ -1,0 +1,12 @@
+{
+	"name": "folk-tidypls",
+	"version": "0.1.0",
+	"title": "Tidy Please!",
+	"author": "folk",
+	"contact": "",
+	"homepage": "https://github.com/folknor/factorio-tidypls",
+	"description": "Robos tidy things tip top in the trenches of their territory. Terrific!",
+	"factorio_version": "2.0",
+	"dependencies": ["base"],
+	"license": "MIT"
+}
