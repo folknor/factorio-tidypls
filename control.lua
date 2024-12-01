@@ -33,6 +33,9 @@ local LOG_DONE_EXPANDING = " - Roboport done expanding: %s"
 local LOG_EXPANDED = " - Expanded port %s: %d bots remaining"
 local LOG_UPGRADED = " - Upgraded port %s: %d bots remaining"
 local LOG_DONE = " - Roboport is done: %s"
+
+---@param var string
+---@param ... string|number
 local function log(var, ...)
 	if not DEBUG_LOG then return end
 	print("TIDY: ", var:format(...))
@@ -157,6 +160,7 @@ local function getTidyNetworkByNID(nid, surface)
 	return nets[index]
 end
 
+---@param ... LuaEntity
 local function addPorts(...)
 	for i = 1, select("#", ...) do
 		---@type LuaEntity
@@ -278,6 +282,7 @@ end
 ---@param net TidyNetwork
 ---@param force LuaForce|ForceID
 ---@param position MapPosition
+---@param ... string
 local function attemptBuild(net, force, position, ...)
 	local used = 0
 	for i = 1, select("#", ...) do
