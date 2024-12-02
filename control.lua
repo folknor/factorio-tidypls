@@ -65,6 +65,7 @@ local C_TECH_ENABLE = "folk-tidypls"
 ---@field doneUpgrading boolean
 ---@field upgradeArea BoundingBox @The full construction area of the roboport in which it can upgrade its tiles.
 ---@field radius number
+---@field maxRadius number
 ---@field buildArea BoundingBox @The current build area, as determined by the .radius.
 ---@field maxEnergy number
 
@@ -159,6 +160,31 @@ local function getTidyNetworkByNID(nid, surface, force)
 	return nets[index]
 end
 
+---@param roboport LuaEntity
+---@param area BoundingBox
+---@return number, number
+local function getPotentialExpansionsAndUpgrades(roboport, area)
+	local expansionFilter = {
+		has_hidden_tile = false,
+		collision_mask = MASK_GROUND_TILE,
+		area = area,
+	}
+	local possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
+	if possibleExpansions == 0 then
+		expansionFilter.has_hidden_tile = true
+		expansionFilter.name = TYPE_LANDFILL
+		possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
+	end
+
+	local possibleUpgrades = roboport.surface.count_tiles_filtered({
+		collision_mask = MASK_GROUND_TILE,
+		name = { TYPE_PATH, TYPE_CONCRETE, },
+		area = area,
+	})
+
+	return possibleExpansions, possibleUpgrades
+end
+
 ---@param ... LuaEntity
 local function addPorts(...)
 	for i = 1, select("#", ...) do
@@ -177,31 +203,12 @@ local function addPorts(...)
 				if already then break end
 			end
 			if not already then
-				-- XXX reset upgradeAreas on tech research
 				local max = roboport.logistic_cell.construction_radius
 				local maxArea = {
 					{ roboport.position.x - max, roboport.position.y - max, },
 					{ roboport.position.x + max, roboport.position.y + max, },
 				}
-
-				local expansionFilter = {
-					has_hidden_tile = false,
-					collision_mask = MASK_GROUND_TILE,
-					area = maxArea,
-				}
-				local possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
-				if possibleExpansions == 0 then
-					expansionFilter.has_hidden_tile = true
-					expansionFilter.name = TYPE_LANDFILL
-					possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
-				end
-
-				local possibleUpgrades = roboport.surface.count_tiles_filtered({
-					collision_mask = MASK_GROUND_TILE,
-					name = { TYPE_PATH, TYPE_CONCRETE, },
-					area = maxArea,
-				})
-
+				local possibleExpansions, possibleUpgrades = getPotentialExpansionsAndUpgrades(roboport, maxArea)
 				if possibleExpansions > 0 or possibleUpgrades > 0 then
 					local nid = roboport.logistic_cell.logistic_network.network_id
 					local net = getTidyNetworkByNID(nid, roboport.surface, roboport.force)
@@ -210,6 +217,7 @@ local function addPorts(...)
 					local port = {
 						roboport = roboport,
 						radius = 3,
+						maxRadius = max,
 						doneUpgrading = (possibleUpgrades == 0),
 						doneExpanding = (possibleExpansions == 0),
 						maxEnergy = roboport.prototype.electric_energy_source_prototype.buffer_capacity,
@@ -351,6 +359,10 @@ local function tidypls()
 
 		for i = #net.ports, 1, -1 do
 			if not validPort(net.ports[i].roboport) or net.ports[i].roboport.logistic_network.network_id ~= net.id then
+				if net.ports[i].roboport and net.ports[i].roboport.valid then
+					-- Recheck this port later
+					storage.forget[net.ports[i].roboport] = true
+				end
 				table.remove(net.ports, i)
 			end
 		end
@@ -413,7 +425,7 @@ local function tidypls()
 								expanded[roboport] = tidyExpand(net, port.buildArea)
 
 								if not expanded[roboport] then
-									if port.radius < roboport.logistic_cell.construction_radius then
+									if port.radius < port.maxRadius then
 										log(LOG_RADIUS_INCREASED, roboport.backer_name)
 										port.radius = port.radius + 1
 										port.buildArea = {
@@ -559,5 +571,50 @@ script.on_event(defines.events.on_research_finished, function(event)
 			end
 		end
 	end
-	-- XXX reset everything because of 3rd party mods
+
+	if storage.forget then
+		for port in pairs(storage.forget) do
+			if port and port.valid then
+				local max = port.logistic_cell.construction_radius
+				local area = {
+					{ port.position.x - max, port.position.y - max, },
+					{ port.position.x + max, port.position.y + max, },
+				}
+				local exp, ups = getPotentialExpansionsAndUpgrades(port, area)
+				if exp ~= 0 or ups ~= 0 then
+					-- Clear first because addPorts checks validPort, which checks .forget
+					storage.forget[port] = nil
+					addPorts(port)
+				end
+			else
+				storage.forget[port] = nil
+			end
+		end
+	end
+
+	if not storage.networks then return end
+	for _, net in next, storage.networks do
+		for i = #net.ports, 1, -1 do
+			if not validPort(net.ports[i].roboport) or net.ports[i].roboport.logistic_network.network_id ~= net.id then
+				if net.ports[i].roboport and net.ports[i].roboport.valid then
+					-- Recheck this port later
+					storage.forget[net.ports[i].roboport] = true
+				end
+				table.remove(net.ports, i)
+			end
+		end
+
+		for _, port in next, net.ports do
+			if port.roboport.logistic_cell.construction_radius ~= port.maxRadius then
+				port.maxRadius = port.roboport.logistic_cell.construction_radius
+				port.upgradeArea = {
+					{ port.roboport.position.x - port.maxRadius, port.roboport.position.y - port.maxRadius, },
+					{ port.roboport.position.x + port.maxRadius, port.roboport.position.y + port.maxRadius, },
+				}
+				local exp, ups = getPotentialExpansionsAndUpgrades(port.roboport, port.upgradeArea)
+				port.doneExpanding = (exp == 0)
+				port.doneUpgrading = (ups == 0)
+			end
+		end
+	end
 end)
