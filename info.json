@@ -7,6 +7,6 @@
 	"homepage": "https://github.com/folknor/factorio-tidypls",
 	"description": "Robos tidy things tip top in the trenches of their territory. Terrific!",
 	"factorio_version": "2.0",
-	"dependencies": ["base"],
+	"dependencies": ["base", "? CleanFloor"],
 	"license": "MIT"
 }

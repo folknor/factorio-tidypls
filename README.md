@@ -14,6 +14,8 @@ Obviously with these values I can never see eye to eye with Utoxin.
 
 Please check out [my other addons](https://mods.factorio.com/user/folk) as well! For example [Blueprint Janitor](https://mods.factorio.com/mods/folk/folk-janitor) or [Shuttle Train Lite](https://mods.factorio.com/mod/folk-shuttle).
 
+I also recommend the mod [Clean Floor](https://mods.factorio.com/mod/CleanFloor) by Skrundz alongside Tidy Pls!. It will remove any decorations below paved areas (grass that would stick out from the concrete, etc).
+
 ## Key differences
 
 The entire codebase is rewritten to be top-down rather than bottom-up. That is to say, the mod works by working with each logistic network instead of each roboport. However this is irrelevant to the end user. These are the relevant parts for normal users:

@@ -15,7 +15,7 @@ local DEBUG_LOG = true
 
 local LOG_INIT = "Tidying pls."
 local LOG_NETWORK = "Processing network: %d"
-local LOG_NO_PORTS = "Network %d has no valid roboports."
+local LOG_NO_PORTS = "Network %d has no valid roboports or is otherwise invalid."
 local LOG_NUMPORTS = " - Available roboports: %d"
 local LOG_SURFACE = " - Surface: %s#%d"
 local LOG_NUMBOTS = " - Available bots: %d"
@@ -71,6 +71,7 @@ local C_TECH_ENABLE = "folk-tidypls"
 
 ---@class TidyNetwork
 ---@field id number
+---@field capacity number
 ---@field force LuaForce|ForceID
 ---@field surface LuaSurface
 ---@field ports TidyPort[]
@@ -153,6 +154,7 @@ local function getTidyNetworkByNID(nid, surface, force)
 			ports = {},
 			items = {},
 			bots = 0,
+			capacity = force.worker_robots_storage_bonus + 1,
 		}
 		table.insert(nets, skynet)
 		index = #nets
@@ -250,53 +252,63 @@ local function initTidyPls()
 	findPorts()
 end
 
----@param net TidyNetwork
----@param type string
----@param position MapPosition
----@return number
-local function build(net, type, position)
-	local count = 0
+local attemptBuild
+do
+	---@param net TidyNetwork
+	---@param type string
+	---@param position MapPosition
+	---@param tidy boolean
+	---@return number
+	local function build(net, type, position, tidy)
+		local count = 0
 
-	local ent = {
-		name = TYPE_TILE_GHOST,
-		position = position,
-		inner_name = type,
-		force = net.force,
-	}
+		local ent = {
+			name = TYPE_TILE_GHOST,
+			position = position,
+			inner_name = type,
+			force = net.force,
+		}
 
-	if net.surface.create_entity(ent) then
-		count = 1
-	end
-
-	FIND_FILTER_CLEAR.area = { { position.x - 0.2, position.y - 0.2, }, { position.x + 0.8, position.y + 0.8, }, }
-
-	for _, clear in next, net.surface.find_entities_filtered(FIND_FILTER_CLEAR) do
-		if clear.type ~= TYPE_CLIFF or net.items[TYPE_EXPLOSIVES] > 0 then
-			clear.order_deconstruction(net.force)
-			count = count + 1
+		if net.surface.create_entity(ent) then
+			-- Account for worker robot capacity a bit. We reduce researched capacity by -1.
+			count = (1 * (1 / math.max(1, net.capacity - 1)))
 		end
-	end
 
-	return count
-end
+		if tidy then
+			FIND_FILTER_CLEAR.area = {
+				{ position.x - 1, position.y - 1, },
+				{ position.x + 1, position.y + 1, },
+			}
 
----@param net TidyNetwork
----@param position MapPosition
----@param ... string
-local function attemptBuild(net, position, ...)
-	local used = 0
-	for i = 1, select("#", ...) do
-		local item = (select(i, ...))
-		if net.items[item] > 0 then
-			-- ZZZ decreasing by usedNow isn't strictly correct because it also includes other cleanup stuff, but meh
-			local usedNow = build(net, item, position)
-			used = used + usedNow
-			net.bots = net.bots - usedNow
-			net.items[TYPE_REFINED] = net.items[TYPE_REFINED] - usedNow
-			return used
+			for _, clear in next, net.surface.find_entities_filtered(FIND_FILTER_CLEAR) do
+				if not clear.to_be_deconstructed() and (clear.type ~= TYPE_CLIFF or net.items[TYPE_EXPLOSIVES] > 0) then
+					clear.order_deconstruction(net.force)
+					count = count + 1
+				end
+			end
 		end
+
+		return count
 	end
-	return used
+
+	---@param net TidyNetwork
+	---@param position MapPosition
+	---@param tidy boolean
+	---@param ... string
+	attemptBuild = function(net, position, tidy, ...)
+		local used = 0
+		for i = 1, select("#", ...) do
+			local item = (select(i, ...))
+			if net.items[item] > 0 then
+				local usedNow = build(net, item, position, tidy)
+				used = used + usedNow
+				net.bots = net.bots - usedNow
+				net.items[TYPE_REFINED] = net.items[TYPE_REFINED] - math.ceil(usedNow)
+				return used
+			end
+		end
+		return used
+	end
 end
 
 ---@param net TidyNetwork
@@ -314,7 +326,7 @@ local function tidyExpand(net, area)
 
 	local used = 0
 	for _, tile in next, virgins do
-		used = used + attemptBuild(net, tile.position, TYPE_REFINED, TYPE_CONCRETE, TYPE_BRICK)
+		used = used + attemptBuild(net, tile.position, true, TYPE_REFINED, TYPE_CONCRETE, TYPE_BRICK)
 		if net.bots < 1 then return used > 0 end
 	end
 	return used > 0
@@ -327,6 +339,7 @@ local countItems = {
 	ITEM_EXPLOSIVES,
 }
 
+---@param net TidyNetwork
 local function recalcUpgradeTargets(net)
 	local ret = {}
 	if net.items[TYPE_REFINED] > 0 or net.items[TYPE_CONCRETE] > 0 then
@@ -350,6 +363,8 @@ local function tidypls()
 	local expanded = {}
 	---@type { [LuaEntity]: boolean }
 	local upgraded = {}
+	---@type { [LuaEntity]: number }
+	local ghosts = {}
 
 	log(LOG_INIT)
 
@@ -367,7 +382,7 @@ local function tidypls()
 			end
 		end
 
-		if #net.ports == 0 then
+		if #net.ports == 0 or not net.force or not net.force.valid or not net.surface or not net.surface.valid then
 			log(LOG_NO_PORTS, net.id)
 			table.remove(nets, j)
 		else
@@ -417,11 +432,14 @@ local function tidypls()
 						if not port.doneExpanding and port.maxEnergy == port.roboport.energy then
 							local roboport = port.roboport
 							-- Dont do anything if there's any ghosts in the build area
-							if net.surface.count_entities_filtered({
+							if not ghosts[roboport] then
+								ghosts[roboport] = net.surface.count_entities_filtered({
 									area = port.buildArea,
 									name = TYPE_TILE_GHOST,
 									force = roboport.force,
-								}) == 0 then
+								})
+							end
+							if ghosts[roboport] == 0 then
 								expanded[roboport] = tidyExpand(net, port.buildArea)
 
 								if not expanded[roboport] then
@@ -458,32 +476,47 @@ local function tidypls()
 								if #upgradeTargets > 0 then
 									local max = math.max(net.items[TYPE_CONCRETE], net.items[TYPE_REFINED], 0)
 									if max > 0 then
-										local upgradeFilter = getUpgradeFilter(
-											port.upgradeArea,
-											upgradeTargets,
-											math.min(max, net.bots)
-										)
-										local upgrades = net.surface.find_tiles_filtered(upgradeFilter)
-										if #upgrades == 0 then
-											port.doneUpgrading = true
-										else
-											local used = 0
-											for _, tile in next, upgrades do
-												-- ZZZ decreasing by usedNow isn't strictly correct because it also includes other cleanup stuff, but meh
-												used = used +
-													attemptBuild(net, tile.position, TYPE_REFINED,
-																 TYPE_CONCRETE)
-												if net.bots < 1 or (net.items[TYPE_REFINED] < 1 and net.items[TYPE_CONCRETE] < 1) then
-													break
-												end
-											end
-											upgraded[port.roboport] = used > 0
+										-- We dont need to recheck this because expanded[] will fail
+										-- for those ports that built anything
+										if not ghosts[port.roboport] then
+											ghosts[port.roboport] = net.surface.count_entities_filtered({
+												area = port.upgradeArea,
+												name = TYPE_TILE_GHOST,
+												force = port.roboport.force,
+											})
 										end
+										if ghosts[port.roboport] == 0 then
+											local upgradeFilter = getUpgradeFilter(
+												port.upgradeArea,
+												upgradeTargets,
+												math.min(max, net.bots)
+											)
+											local upgrades = net.surface.find_tiles_filtered(upgradeFilter)
+											if #upgrades == 0 then
+												port.doneUpgrading = true
+											else
+												local used = 0
+												for _, tile in next, upgrades do
+													used = used +
+														attemptBuild(
+															net,
+															tile.position,
+															false,
+															TYPE_REFINED,
+															TYPE_CONCRETE
+														)
+													if net.bots < 1 or (net.items[TYPE_REFINED] < 1 and net.items[TYPE_CONCRETE] < 1) then
+														break
+													end
+												end
+												upgraded[port.roboport] = used > 0
+											end
 
-										if upgraded[port.roboport] then
-											log(LOG_UPGRADED, port.roboport.backer_name, net.bots)
-											upgradeTargets = recalcUpgradeTargets(net)
-											if #upgradeTargets == 0 then break end
+											if upgraded[port.roboport] then
+												log(LOG_UPGRADED, port.roboport.backer_name, net.bots)
+												upgradeTargets = recalcUpgradeTargets(net)
+												if #upgradeTargets == 0 then break end
+											end
 										end
 										if net.bots < 1 then break end
 									else
@@ -594,26 +627,30 @@ script.on_event(defines.events.on_research_finished, function(event)
 
 	if not storage.networks then return end
 	for _, net in next, storage.networks do
-		for i = #net.ports, 1, -1 do
-			if not validPort(net.ports[i].roboport) or net.ports[i].roboport.logistic_network.network_id ~= net.id then
-				if net.ports[i].roboport and net.ports[i].roboport.valid then
-					-- Recheck this port later
-					storage.forget[net.ports[i].roboport] = true
+		if net.force.valid and net.surface.valid then
+			for i = #net.ports, 1, -1 do
+				if not validPort(net.ports[i].roboport) or net.ports[i].roboport.logistic_network.network_id ~= net.id then
+					if net.ports[i].roboport and net.ports[i].roboport.valid then
+						-- Recheck this port later
+						storage.forget[net.ports[i].roboport] = true
+					end
+					table.remove(net.ports, i)
 				end
-				table.remove(net.ports, i)
 			end
-		end
 
-		for _, port in next, net.ports do
-			if port.roboport.logistic_cell.construction_radius ~= port.maxRadius then
-				port.maxRadius = port.roboport.logistic_cell.construction_radius
-				port.upgradeArea = {
-					{ port.roboport.position.x - port.maxRadius, port.roboport.position.y - port.maxRadius, },
-					{ port.roboport.position.x + port.maxRadius, port.roboport.position.y + port.maxRadius, },
-				}
-				local exp, ups = getPotentialExpansionsAndUpgrades(port.roboport, port.upgradeArea)
-				port.doneExpanding = (exp == 0)
-				port.doneUpgrading = (ups == 0)
+			net.capacity = net.force.worker_robots_storage_bonus + 1
+
+			for _, port in next, net.ports do
+				if port.roboport.logistic_cell.construction_radius ~= port.maxRadius then
+					port.maxRadius = port.roboport.logistic_cell.construction_radius
+					port.upgradeArea = {
+						{ port.roboport.position.x - port.maxRadius, port.roboport.position.y - port.maxRadius, },
+						{ port.roboport.position.x + port.maxRadius, port.roboport.position.y + port.maxRadius, },
+					}
+					local exp, ups = getPotentialExpansionsAndUpgrades(port.roboport, port.upgradeArea)
+					port.doneExpanding = (exp == 0)
+					port.doneUpgrading = (ups == 0)
+				end
 			end
 		end
 	end
