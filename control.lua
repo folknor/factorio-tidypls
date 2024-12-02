@@ -11,14 +11,6 @@
 --
 -- COME AT ME lulz
 
--- XXX TODO
--- 1. Add upgrade tech to unlock mod at all
--- 2. Add upgrade tech to clear cliffs
--- 3. Add upgrade tech to upgrade tiles?
--- 4. Reset ports.upgradeArea every time ANY tech is researched
--- 5. Check max construction radius on tech upgrade and also remove from storage.forget and stuff
--- 6. Carry capacity of con bots determines real number of potential jobs, but not directly because a job might just be one tile
-
 local DEBUG_LOG = true
 
 local LOG_INIT = "Tidying pls."
@@ -33,7 +25,7 @@ local LOG_DONE_EXPANDING = " - Roboport done expanding: %s"
 local LOG_EXPANDED = " - Expanded port %s: %d bots remaining"
 local LOG_UPGRADED = " - Upgraded port %s: %d bots remaining"
 local LOG_DONE = " - Roboport is done: %s"
-local LOG_DISABLED = "Tidying has been disabled for this network."
+local LOG_DISABLED = " - Tidying has been disabled for this network."
 
 ---@param var string
 ---@param ... string|number
@@ -78,6 +70,7 @@ local C_TECH_ENABLE = "folk-tidypls"
 
 ---@class TidyNetwork
 ---@field id number
+---@field force LuaForce|ForceID
 ---@field surface LuaSurface
 ---@field ports TidyPort[]
 ---@field items { [string]: number }
@@ -126,18 +119,19 @@ local function validPort(ent)
 		ent.logistic_cell and
 		ent.logistic_cell.valid and
 		ent.logistic_cell.construction_radius > 0 and
-		ent.logistic_network and
-		ent.logistic_network.valid and
-		ent.logistic_network.network_id and
-		ent.logistic_network.network_id > 0 and
+		ent.logistic_cell.logistic_network and
+		ent.logistic_cell.logistic_network.valid and
+		ent.logistic_cell.logistic_network.network_id and
+		ent.logistic_cell.logistic_network.network_id > 0 and
 		not storage.forget[ent] and
 		not ent.logistic_cell.mobile
 end
 
 ---@param nid number
 ---@param surface LuaSurface
+---@param force LuaForce|ForceID
 ---@return TidyNetwork
-local function getTidyNetworkByNID(nid, surface)
+local function getTidyNetworkByNID(nid, surface, force)
 	---@type TidyNetwork[]
 	local nets = storage.networks
 
@@ -154,6 +148,7 @@ local function getTidyNetworkByNID(nid, surface)
 		local skynet = {
 			id = nid,
 			surface = surface,
+			force = force,
 			ports = {},
 			items = {},
 			bots = 0,
@@ -208,8 +203,8 @@ local function addPorts(...)
 				})
 
 				if possibleExpansions > 0 or possibleUpgrades > 0 then
-					local nid = roboport.logistic_network.network_id
-					local net = getTidyNetworkByNID(nid, roboport.surface)
+					local nid = roboport.logistic_cell.logistic_network.network_id
+					local net = getTidyNetworkByNID(nid, roboport.surface, roboport.force)
 
 					---@type TidyPort
 					local port = {
@@ -247,35 +242,29 @@ local function initTidyPls()
 	findPorts()
 end
 
-
-
 ---@param net TidyNetwork
----@param surface LuaSurface
----@param force LuaForce|ForceID
 ---@param type string
 ---@param position MapPosition
 ---@return number
-local function build(net, surface, force, type, position)
+local function build(net, type, position)
 	local count = 0
 
 	local ent = {
 		name = TYPE_TILE_GHOST,
 		position = position,
 		inner_name = type,
-		force = force,
+		force = net.force,
 	}
 
-	if surface.create_entity(ent) then
+	if net.surface.create_entity(ent) then
 		count = 1
-	else
-		return count
 	end
 
 	FIND_FILTER_CLEAR.area = { { position.x - 0.2, position.y - 0.2, }, { position.x + 0.8, position.y + 0.8, }, }
 
-	for _, clear in next, surface.find_entities_filtered(FIND_FILTER_CLEAR) do
+	for _, clear in next, net.surface.find_entities_filtered(FIND_FILTER_CLEAR) do
 		if clear.type ~= TYPE_CLIFF or net.items[TYPE_EXPLOSIVES] > 0 then
-			clear.order_deconstruction(force)
+			clear.order_deconstruction(net.force)
 			count = count + 1
 		end
 	end
@@ -284,16 +273,15 @@ local function build(net, surface, force, type, position)
 end
 
 ---@param net TidyNetwork
----@param force LuaForce|ForceID
 ---@param position MapPosition
 ---@param ... string
-local function attemptBuild(net, force, position, ...)
+local function attemptBuild(net, position, ...)
 	local used = 0
 	for i = 1, select("#", ...) do
 		local item = (select(i, ...))
 		if net.items[item] > 0 then
 			-- ZZZ decreasing by usedNow isn't strictly correct because it also includes other cleanup stuff, but meh
-			local usedNow = build(net, net.surface, force, item, position)
+			local usedNow = build(net, item, position)
 			used = used + usedNow
 			net.bots = net.bots - usedNow
 			net.items[TYPE_REFINED] = net.items[TYPE_REFINED] - usedNow
@@ -305,9 +293,8 @@ end
 
 ---@param net TidyNetwork
 ---@param area BoundingBox
----@param force LuaForce|ForceID
 ---@return boolean
-local function tidyExpand(net, area, force)
+local function tidyExpand(net, area)
 	local virginFilter = getVirginFilter(net.bots, area)
 	local virgins = net.surface.find_tiles_filtered(virginFilter)
 
@@ -319,7 +306,7 @@ local function tidyExpand(net, area, force)
 
 	local used = 0
 	for _, tile in next, virgins do
-		used = used + attemptBuild(net, force, tile.position, TYPE_REFINED, TYPE_CONCRETE, TYPE_BRICK)
+		used = used + attemptBuild(net, tile.position, TYPE_REFINED, TYPE_CONCRETE, TYPE_BRICK)
 		if net.bots < 1 then return used > 0 end
 	end
 	return used > 0
@@ -374,13 +361,12 @@ local function tidypls()
 		else
 			log(LOG_NUMPORTS, #net.ports)
 
-			local first = net.ports[1].roboport
-			local researched = first.force.technologies[C_TECH_ENABLE] and
-				first.force.technologies[C_TECH_ENABLE].researched
+			local researched = net.force.technologies[C_TECH_ENABLE] and
+				net.force.technologies[C_TECH_ENABLE].researched
 
 			local enabled = false
 			for _, player in pairs(game.players) do
-				if player.force == first.force then
+				if player.force == net.force then
 					enabled = player.is_shortcut_toggled(C_LUA_EVENT)
 					break
 				end
@@ -389,6 +375,7 @@ local function tidypls()
 				log(LOG_DISABLED)
 			end
 
+			local first = net.ports[1].roboport
 			local available = first.logistic_network.available_construction_robots
 			local total = first.logistic_network.all_construction_robots
 			if (available / total) < 0.1 then break end
@@ -409,8 +396,8 @@ local function tidypls()
 
 				if any then
 					-- utoxin pls what is this
-					if first.force.max_successful_attempts_per_tick_per_construction_queue * 60 < net.bots then
-						first.force.max_successful_attempts_per_tick_per_construction_queue = math.floor(net.bots / 60)
+					if net.force.max_successful_attempts_per_tick_per_construction_queue * 60 < net.bots then
+						net.force.max_successful_attempts_per_tick_per_construction_queue = math.floor(net.bots / 60)
 					end
 
 					-- First check if we can expand at all
@@ -423,7 +410,7 @@ local function tidypls()
 									name = TYPE_TILE_GHOST,
 									force = roboport.force,
 								}) == 0 then
-								expanded[roboport] = tidyExpand(net, port.buildArea, roboport.force)
+								expanded[roboport] = tidyExpand(net, port.buildArea)
 
 								if not expanded[roboport] then
 									if port.radius < roboport.logistic_cell.construction_radius then
@@ -472,7 +459,7 @@ local function tidypls()
 											for _, tile in next, upgrades do
 												-- ZZZ decreasing by usedNow isn't strictly correct because it also includes other cleanup stuff, but meh
 												used = used +
-													attemptBuild(net, port.roboport.force, tile.position, TYPE_REFINED,
+													attemptBuild(net, tile.position, TYPE_REFINED,
 																 TYPE_CONCRETE)
 												if net.bots < 1 or (net.items[TYPE_REFINED] < 1 and net.items[TYPE_CONCRETE] < 1) then
 													break
