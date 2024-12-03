@@ -269,15 +269,19 @@ do
 			force = net.force,
 		}
 
-		if net.surface.create_entity(ent) then
-			-- Account for worker robot capacity a bit. We reduce researched capacity by -1.
-			count = (1 * (1 / math.max(1, net.capacity - 1)))
+		if net.surface.can_place_entity(ent) then
+			ent.expires = false
+			if net.surface.create_entity(ent) then
+				-- Account for worker robot capacity a bit. We reduce researched capacity by -1.
+				--count = (1 * (1 / math.max(1, net.capacity - 1)))
+				count = 1
+			end
 		end
 
 		if tidy then
 			FIND_FILTER_CLEAR.area = {
-				{ position.x - 1, position.y - 1, },
-				{ position.x + 1, position.y + 1, },
+				{ position.x - 0.2, position.y - 0.8, },
+				{ position.x + 0.2, position.y + 0.8, },
 			}
 
 			for _, clear in next, net.surface.find_entities_filtered(FIND_FILTER_CLEAR) do
@@ -604,53 +608,74 @@ script.on_event(defines.events.on_research_finished, function(event)
 			end
 		end
 	end
+	if not storage.networks or not storage.forget then return end
 
-	if storage.forget then
-		for port in pairs(storage.forget) do
-			if port and port.valid then
-				local max = port.logistic_cell.construction_radius
-				local area = {
-					{ port.position.x - max, port.position.y - max, },
-					{ port.position.x + max, port.position.y + max, },
-				}
-				local exp, ups = getPotentialExpansionsAndUpgrades(port, area)
-				if exp ~= 0 or ups ~= 0 then
-					-- Clear first because addPorts checks validPort, which checks .forget
-					storage.forget[port] = nil
-					addPorts(port)
+	-- Make sure we reevaluate all nets and ports
+
+	-- First, remove all ports from all nets that are no longer valid, and put them
+	-- into storage.forget if they still exist.
+
+	for _, net in next, storage.networks do
+		for j = #net.ports, 1, -1 do
+			local rob = net.ports[j].roboport
+			if not validPort(rob) or rob.logistic_network.network_id ~= net.id then
+				if rob and rob.valid then
+					-- Recheck this port later
+					storage.forget[rob] = true
 				end
-			else
-				storage.forget[port] = nil
+				table.remove(net.ports, j)
 			end
 		end
 	end
 
-	if not storage.networks then return end
-	for _, net in next, storage.networks do
-		if net.force.valid and net.surface.valid then
-			for i = #net.ports, 1, -1 do
-				if not validPort(net.ports[i].roboport) or net.ports[i].roboport.logistic_network.network_id ~= net.id then
-					if net.ports[i].roboport and net.ports[i].roboport.valid then
-						-- Recheck this port later
-						storage.forget[net.ports[i].roboport] = true
-					end
-					table.remove(net.ports, i)
+	-- Second, nuke all empty or invalid nets
+	for i = #storage.networks, 1, -1 do
+		local net = storage.networks[i]
+		if net.ports == 0 or not net.force or not net.force.valid or not net.surface or not net.surface.valid then
+			-- But preserve all valid roboports. Not sure if there can ever be any though
+			for _, port in next, net.ports do
+				if port.roboport and port.roboport.valid then
+					storage.forget[port.roboport] = true
 				end
 			end
+			table.remove(storage.networks, i)
+		end
+	end
 
-			net.capacity = net.force.worker_robots_storage_bonus + 1
+	-- Third, revive any forgotten roboports that are still valid and that still have work to do
+	for port in pairs(storage.forget) do
+		if port and port.valid then
+			local max = port.logistic_cell.construction_radius
+			local area = {
+				{ port.position.x - max, port.position.y - max, },
+				{ port.position.x + max, port.position.y + max, },
+			}
+			-- XXX This doesn't account for debris/cliffs that need to be cleared
+			local exp, ups = getPotentialExpansionsAndUpgrades(port, area)
+			if exp ~= 0 or ups ~= 0 then
+				-- Clear first because addPorts checks validPort, which checks .forget
+				storage.forget[port] = nil
+				addPorts(port)
+			end
+		else
+			storage.forget[port] = nil
+		end
+	end
 
-			for _, port in next, net.ports do
-				if port.roboport.logistic_cell.construction_radius ~= port.maxRadius then
-					port.maxRadius = port.roboport.logistic_cell.construction_radius
-					port.upgradeArea = {
-						{ port.roboport.position.x - port.maxRadius, port.roboport.position.y - port.maxRadius, },
-						{ port.roboport.position.x + port.maxRadius, port.roboport.position.y + port.maxRadius, },
-					}
-					local exp, ups = getPotentialExpansionsAndUpgrades(port.roboport, port.upgradeArea)
-					port.doneExpanding = (exp == 0)
-					port.doneUpgrading = (ups == 0)
-				end
+	-- Fourth, upgrade the radius of all registered ports if necessary
+	for _, net in next, storage.networks do
+		net.capacity = net.force.worker_robots_storage_bonus + 1
+
+		for _, port in next, net.ports do
+			if port.roboport.logistic_cell.construction_radius ~= port.maxRadius then
+				port.maxRadius = port.roboport.logistic_cell.construction_radius
+				port.upgradeArea = {
+					{ port.roboport.position.x - port.maxRadius, port.roboport.position.y - port.maxRadius, },
+					{ port.roboport.position.x + port.maxRadius, port.roboport.position.y + port.maxRadius, },
+				}
+				local exp, ups = getPotentialExpansionsAndUpgrades(port.roboport, port.upgradeArea)
+				port.doneExpanding = (exp == 0)
+				port.doneUpgrading = (ups == 0)
 			end
 		end
 	end
