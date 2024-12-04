@@ -11,7 +11,7 @@
 --
 -- COME AT ME lulz
 
-local DEBUG_LOG = true
+local DEBUG_LOG = false
 
 local LOG_INIT = "Tidying pls."
 local LOG_NETWORK = "Processing network: %d"

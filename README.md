@@ -23,6 +23,7 @@ The entire codebase is rewritten to be top-down rather than bottom-up. That is t
 -   Zero config.
 -   Doesn't do landfills or patterns.
 -   Unlocks by tech and has a keybinding and button to toggle the mod on/off.
+-   Hopefully, potentially, it could have less impact on UPS because of the top-down approach.
 
 ## How it works
 
