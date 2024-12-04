@@ -56,6 +56,13 @@ local ITEM_CONCRETE = { name = TYPE_CONCRETE, quality = "normal", }
 local ITEM_BRICK = { name = TYPE_BRICK, quality = "normal", }
 local ITEM_REFINED = { name = TYPE_REFINED, quality = "normal", }
 
+-- local TYPE_TO_ITEM = {
+-- 	[TYPE_BRICK] = ITEM_BRICK,
+-- 	[TYPE_CONCRETE] = ITEM_CONCRETE,
+-- 	[TYPE_REFINED] = ITEM_REFINED,
+-- 	[TYPE_EXPLOSIVES] = ITEM_EXPLOSIVES,
+-- }
+
 local C_LUA_EVENT = "folk-tidypls-toggle"
 local C_TECH_ENABLE = "folk-tidypls"
 
@@ -307,7 +314,7 @@ do
 				local usedNow = build(net, item, position, tidy)
 				used = used + usedNow
 				net.bots = net.bots - usedNow
-				net.items[TYPE_REFINED] = net.items[TYPE_REFINED] - math.ceil(usedNow)
+				net.items[item] = net.items[item] - math.ceil(usedNow)
 				return used
 			end
 		end
