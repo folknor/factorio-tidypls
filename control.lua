@@ -465,10 +465,9 @@ local function tidypls()
 								else
 									log(LOG_EXPANDED, roboport.backer_name, net.bots)
 								end
-
-								if net.bots < 1 then break end
 							end
 						end
+						if net.bots < 1 then break end
 					end
 
 					if net.bots > 0 then
@@ -540,7 +539,7 @@ local function tidypls()
 					-- Shufflefeet penguins
 					for i = #net.ports, 2, -1 do
 						local x = math.random(i)
-						net.ports[x], net.ports[j] = net.ports[j], net.ports[x]
+						net.ports[i], net.ports[x] = net.ports[x], net.ports[i]
 					end
 				end
 			end
