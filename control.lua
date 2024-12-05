@@ -337,7 +337,7 @@ local function tidyExpand(net, area)
 
 	local used = 0
 	for _, tile in next, virgins do
-		used = used + attemptBuild(net, tile.position, true, TYPE_REFINED, TYPE_CONCRETE, TYPE_BRICK)
+		used = used + attemptBuild(net, tile.position, true, TYPE_REFINED, TYPE_CONCRETE, TYPE_PATH)
 		if net.bots < 1 then return used > 0 end
 	end
 	return used > 0

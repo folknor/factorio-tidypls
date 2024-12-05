@@ -16,6 +16,8 @@ Please check out [my other addons](https://mods.factorio.com/user/folk) as well!
 
 I also recommend the mod [Clean Floor](https://mods.factorio.com/mod/CleanFloor) by Skrundz alongside Tidy Pls!. It will remove any decorations below paved areas (grass that would stick out from the concrete, etc).
 
+Please be aware that if your defensive perimiter depends on cliffs, activating this mod might result in the cliffs being removed at some point (if there are construction areas from roboports that extend over them, and if the logistic network contains more than 100 cliff explosives)!
+
 ## Key differences
 
 The entire codebase is rewritten to be top-down rather than bottom-up. That is to say, the mod works by working with each logistic network instead of each roboport. However this is irrelevant to the end user. These are the relevant parts for normal users:
