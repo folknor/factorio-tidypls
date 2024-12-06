@@ -18,6 +18,8 @@ I also recommend the mod [Clean Floor](https://mods.factorio.com/mod/CleanFloor)
 
 Please be aware that if your defensive perimiter depends on cliffs, activating this mod might result in the cliffs being removed at some point (if there are construction areas from roboports that extend over them, and if the logistic network contains more than 100 cliff explosives)!
 
+Also note that I have tested it, and Demolishers on Vulcanus do not react to paving :-)
+
 ## Key differences
 
 The entire codebase is rewritten to be top-down rather than bottom-up. That is to say, the mod works by working with each logistic network instead of each roboport. However this is irrelevant to the end user. These are the relevant parts for normal users:
@@ -32,7 +34,7 @@ The entire codebase is rewritten to be top-down rather than bottom-up. That is t
 The mod builds stone/concrete/refined concrete around all roboports slowly. Like the Zerg creep from Starcraft it grows outwards.
 
 1. Every 30 seconds, it looks at each logistic network and finds the number of available bots.
-2. 10% of available bots are allocated.
+2. 10% of available bots are allocated, but there must be a minimum of 10 construction robots in the network.
 3. The number of normal-quality Refined Concrete, Concrete, and Stone Brick in each network is calculated, always saving at least 100 of each.
 4. Every roboport is checked whether its entire construction area is covered in any of the 3 kinds, and if not then it builds outwards from the center.
 5. If there are still bots available, it checks to see if any area is covered by inferior types of tiles (Refined is better than Concrete is better than Stone), and upgrades as necessary.

@@ -12,6 +12,7 @@
 -- COME AT ME lulz
 
 local DEBUG_LOG = false
+local INTERVAL = 30 * 60
 
 local LOG_INIT = "Tidying pls."
 local LOG_NETWORK = "Processing network: %d"
@@ -41,7 +42,10 @@ local TYPE_TREE = "tree"
 local TYPE_SIMPLE = "simple-entity"
 local TYPE_LANDFILL = "landfill"
 
-local FIND_FILTER_CLEAR = { type = { TYPE_TREE, TYPE_SIMPLE, TYPE_CLIFF, }, }
+local FIND_FILTER_CLEAR = {
+	type = { TYPE_TREE, TYPE_SIMPLE, TYPE_CLIFF, },
+	to_be_deconstructed = false,
+}
 local TYPE_ROBOPORT = "roboport"
 local FIND_FILTER = { type = TYPE_ROBOPORT, }
 
@@ -56,12 +60,11 @@ local ITEM_CONCRETE = { name = TYPE_CONCRETE, quality = "normal", }
 local ITEM_BRICK = { name = TYPE_BRICK, quality = "normal", }
 local ITEM_REFINED = { name = TYPE_REFINED, quality = "normal", }
 
--- local TYPE_TO_ITEM = {
--- 	[TYPE_BRICK] = ITEM_BRICK,
--- 	[TYPE_CONCRETE] = ITEM_CONCRETE,
--- 	[TYPE_REFINED] = ITEM_REFINED,
--- 	[TYPE_EXPLOSIVES] = ITEM_EXPLOSIVES,
--- }
+local ITEM_TO_TILE = {
+	[TYPE_BRICK] = TYPE_PATH,
+	[TYPE_CONCRETE] = TYPE_CONCRETE,
+	[TYPE_REFINED] = TYPE_REFINED,
+}
 
 local C_LUA_EVENT = "folk-tidypls-toggle"
 local C_TECH_ENABLE = "folk-tidypls"
@@ -194,6 +197,12 @@ local function getPotentialExpansionsAndUpgrades(roboport, area)
 	return possibleExpansions, possibleUpgrades
 end
 
+-- So when you're creating a new network;
+-- 1. The first roboport you plop down creates a new network.
+-- 2. The second roboport you plop down in range creates a new network
+-- 3. The roboport from #1 is adopted into the network from #2
+-- ... ffs
+
 ---@param ... LuaEntity
 local function addPorts(...)
 	for i = 1, select("#", ...) do
@@ -264,38 +273,24 @@ do
 	---@param net TidyNetwork
 	---@param type string
 	---@param position MapPosition
-	---@param tidy boolean
 	---@return number
-	local function build(net, type, position, tidy)
+	local function build(net, type, position)
 		local count = 0
 
 		local ent = {
 			name = TYPE_TILE_GHOST,
 			position = position,
-			inner_name = type,
+			inner_name = ITEM_TO_TILE[type],
 			force = net.force,
 		}
 
 		if net.surface.can_place_entity(ent) then
-			ent.expires = false
+			-- ZZZ why was this here?
+			--ent.expires = false
 			if net.surface.create_entity(ent) then
 				-- Account for worker robot capacity a bit. We reduce researched capacity by -1.
 				--count = (1 * (1 / math.max(1, net.capacity - 1)))
 				count = 1
-			end
-		end
-
-		if tidy then
-			FIND_FILTER_CLEAR.area = {
-				{ position.x - 0.2, position.y - 0.8, },
-				{ position.x + 0.2, position.y + 0.8, },
-			}
-
-			for _, clear in next, net.surface.find_entities_filtered(FIND_FILTER_CLEAR) do
-				if not clear.to_be_deconstructed() and (clear.type ~= TYPE_CLIFF or net.items[TYPE_EXPLOSIVES] > 0) then
-					clear.order_deconstruction(net.force)
-					count = count + 1
-				end
 			end
 		end
 
@@ -304,14 +299,13 @@ do
 
 	---@param net TidyNetwork
 	---@param position MapPosition
-	---@param tidy boolean
 	---@param ... string
-	attemptBuild = function(net, position, tidy, ...)
+	attemptBuild = function(net, position, ...)
 		local used = 0
 		for i = 1, select("#", ...) do
 			local item = (select(i, ...))
 			if net.items[item] > 0 then
-				local usedNow = build(net, item, position, tidy)
+				local usedNow = build(net, item, position)
 				used = used + usedNow
 				net.bots = net.bots - usedNow
 				net.items[item] = net.items[item] - math.ceil(usedNow)
@@ -324,8 +318,9 @@ end
 
 ---@param net TidyNetwork
 ---@param area BoundingBox
+---@param tidy boolean
 ---@return boolean
-local function tidyExpand(net, area)
+local function tidyExpand(net, area, tidy)
 	local virginFilter = getVirginFilter(net.bots, area)
 	local virgins = net.surface.find_tiles_filtered(virginFilter)
 
@@ -337,9 +332,22 @@ local function tidyExpand(net, area)
 
 	local used = 0
 	for _, tile in next, virgins do
-		used = used + attemptBuild(net, tile.position, true, TYPE_REFINED, TYPE_CONCRETE, TYPE_PATH)
+		used = used + attemptBuild(net, tile.position, TYPE_REFINED, TYPE_CONCRETE, TYPE_BRICK)
 		if net.bots < 1 then return used > 0 end
 	end
+
+	if tidy then
+		FIND_FILTER_CLEAR.area = area
+		for _, clear in next, net.surface.find_entities_filtered(FIND_FILTER_CLEAR) do
+			if not clear.to_be_deconstructed() and (clear.type ~= TYPE_CLIFF or net.items[TYPE_EXPLOSIVES] > 0) then
+				clear.order_deconstruction(net.force)
+				used = used + 1
+				net.bots = net.bots - 1
+				if net.bots < 1 then return used > 0 end
+			end
+		end
+	end
+
 	return used > 0
 end
 
@@ -385,11 +393,17 @@ local function tidypls()
 
 		for i = #net.ports, 1, -1 do
 			if not validPort(net.ports[i].roboport) or net.ports[i].roboport.logistic_network.network_id ~= net.id then
-				if net.ports[i].roboport and net.ports[i].roboport.valid then
-					-- Recheck this port later
-					storage.forget[net.ports[i].roboport] = true
-				end
+				local rp = net.ports[i].roboport
 				table.remove(net.ports, i)
+				if rp and rp.valid then
+					if rp.logistic_cell and rp.logistic_cell.valid and #rp.logistic_cell.neighbours > 0 then
+						-- Adopt into neighbouring network
+						addPorts(rp)
+					else
+						-- Recheck this port later
+						storage.forget[rp] = true
+					end
+				end
 			end
 		end
 
@@ -448,10 +462,11 @@ local function tidypls()
 									area = port.buildArea,
 									name = TYPE_TILE_GHOST,
 									force = roboport.force,
+									limit = 1,
 								})
 							end
 							if ghosts[roboport] == 0 then
-								expanded[roboport] = tidyExpand(net, port.buildArea)
+								expanded[roboport] = tidyExpand(net, port.buildArea, port.radius < port.maxRadius)
 
 								if not expanded[roboport] then
 									if port.radius < port.maxRadius then
@@ -493,6 +508,7 @@ local function tidypls()
 												area = port.upgradeArea,
 												name = TYPE_TILE_GHOST,
 												force = port.roboport.force,
+												limit = 1,
 											})
 										end
 										if ghosts[port.roboport] == 0 then
@@ -511,7 +527,6 @@ local function tidypls()
 														attemptBuild(
 															net,
 															tile.position,
-															false,
 															TYPE_REFINED,
 															TYPE_CONCRETE
 														)
@@ -572,7 +587,7 @@ script.on_event(defines.events.on_robot_built_entity, built)
 script.on_event(defines.events.on_entity_cloned, built)
 script.on_event(defines.events.script_raised_revive, built)
 
-script.on_nth_tick(30 * 60, tidypls)
+script.on_nth_tick(INTERVAL, tidypls)
 script.on_init(initTidyPls)
 script.on_configuration_changed(initTidyPls)
 

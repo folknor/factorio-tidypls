@@ -1,4 +1,14 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.2
+Date: 2024-12-06
+  Changes:
+    - Actually fix stone path building. Tested it this time, jeez.
+    - We're not much more proactive about adopting "orphaned" roboports into
+      neighbouring networks.
+    - Clear areas much more thoroughly from trees and such, and count these
+      orders properly against the allocated robots
+
+---------------------------------------------------------------------------------------------------
 Version: 0.2.1
 Date: 2024-12-05
   Changes:
