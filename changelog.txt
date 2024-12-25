@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.3
+Date: 2024-12-25
+  Changes:
+    - No longer paves over growable tiles on Gleba
+    - Can now pave over ice foundation and foundation foundation just like landfill
+    - Even even better at clearing out cliffs and trees
+
+---------------------------------------------------------------------------------------------------
 Version: 0.2.2
 Date: 2024-12-06
   Changes:

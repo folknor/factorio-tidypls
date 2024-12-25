@@ -42,10 +42,6 @@ local TYPE_TREE = "tree"
 local TYPE_SIMPLE = "simple-entity"
 local TYPE_LANDFILL = "landfill"
 
-local FIND_FILTER_CLEAR = {
-	type = { TYPE_TREE, TYPE_SIMPLE, TYPE_CLIFF, },
-	to_be_deconstructed = false,
-}
 local TYPE_ROBOPORT = "roboport"
 local FIND_FILTER = { type = TYPE_ROBOPORT, }
 
@@ -65,6 +61,7 @@ local ITEM_TO_TILE = {
 	[TYPE_CONCRETE] = TYPE_CONCRETE,
 	[TYPE_REFINED] = TYPE_REFINED,
 }
+local UPGRADEABLE_PAVEMENTS = { TYPE_PATH, TYPE_CONCRETE, }
 
 local C_LUA_EVENT = "folk-tidypls-toggle"
 local C_TECH_ENABLE = "folk-tidypls"
@@ -92,31 +89,170 @@ local C_TECH_ENABLE = "folk-tidypls"
 ---@field networks TidyNetwork[]
 
 
-local getVirginFilter
+local getClearableEntities, countClearableEntities
 do
+	---@type EntitySearchFilters
 	local filter = {
-		has_hidden_tile = false,
-		collision_mask = MASK_GROUND_TILE,
+		type = { TYPE_TREE, TYPE_SIMPLE, TYPE_CLIFF, },
+		to_be_deconstructed = false,
 	}
-	getVirginFilter = function(bots, area)
-		filter.has_hidden_tile = false
-		filter.name = nil
-		filter.limit = bots
+
+	---@param surface LuaSurface
+	---@param area BoundingBox
+	---@return LuaEntity[]
+	getClearableEntities = function(surface, area)
 		filter.area = area
-		return filter
+		return surface.find_entities_filtered(filter)
+	end
+
+	---@param surface LuaSurface
+	---@param area BoundingBox
+	---@return number
+	countClearableEntities = function(surface, area)
+		filter.area = area
+		return surface.count_entities_filtered(filter)
 	end
 end
 
-local getUpgradeFilter
+-- Virgin/natural_width tiles are tiles that are placed at map generation
+local getTilesNatural, countTilesNatural
 do
+	-- XXX We should generate this from the prototype data
+	-- tileproto.is_foundation, .allows_being_covered
+	-- itemproto.place_as_tile_result.result = tileproto
+	local IGNORE_TILES = {
+		-- XXX when these tiles are present we need to pause and reevaluate after landfilling is done
+		["natural-yumako-soil"] = true,
+		["artificial-yumako-soil"] = true,
+		["overgrowth-yumako-soil"] = true,
+		["natural-jellynut-soil"] = true,
+		["artificial-jellynut-soil"] = true,
+		["overgrowth-jellynut-soil"] = true,
+	}
+
+	---@type TileSearchFilters
 	local filter = {
+		--has_hidden_tile = false,
+		--has_double_hidden_tile = false,
+		--has_tile_ghost = false,
+		to_be_deconstructed = false,
+		collision_mask = MASK_GROUND_TILE,
+		name = {},
+		-- ZZZ Unfortunately, invert also inverts collision_mask and potentially some of the other properties
+	}
+
+	---@param surface LuaSurface
+	---@param limit number|nil
+	---@param area BoundingBox
+	---@return LuaTile[]
+	getTilesNatural = function(surface, limit, area)
+		if #filter.name == 0 then
+			local protos = prototypes.get_tile_filtered({
+				{ filter = "item-to-place",  invert = true,               mode = "and", },
+				{ filter = "collision-mask", mask_mode = "layers-equals", mask = "ground_tile", mode = "and", },
+			})
+			for name in pairs(protos) do
+				if not IGNORE_TILES[name] then
+					table.insert(filter.name, name)
+				end
+			end
+			print(serpent.block(filter.name))
+		end
+
+		filter.limit = limit
+		filter.area = area
+		return surface.find_tiles_filtered(filter)
+	end
+
+	---@param surface LuaSurface
+	---@param limit number|nil
+	---@param area BoundingBox
+	---@return number
+	countTilesNatural = function(surface, limit, area)
+		if #filter.name == 0 then
+			local protos = prototypes.get_tile_filtered({
+				{ filter = "item-to-place",  invert = true,               mode = "and", },
+				{ filter = "collision-mask", mask_mode = "layers-equals", mask = "ground_tile", mode = "and", },
+			})
+			for name in pairs(protos) do
+				if not IGNORE_TILES[name] then
+					table.insert(filter.name, name)
+				end
+			end
+			print(serpent.block(filter.name))
+		end
+
+		filter.limit = limit
+		filter.area = area
+		return surface.count_tiles_filtered(filter)
+	end
+end
+
+
+local getTilesManMade, countTilesManMade
+do
+	---@type TileSearchFilters
+	local filter = {
+		--has_hidden_tile = true,
+		has_tile_ghost = false,
+		to_be_deconstructed = false,
+		collision_mask = MASK_GROUND_TILE,
+		-- XXX We should generate this from the prototype data
+		name = { TYPE_LANDFILL, "ice-platform", "foundation", },
+	}
+
+	---@param surface LuaSurface
+	---@param limit number|nil
+	---@param area BoundingBox
+	---@return LuaTile[]
+	getTilesManMade = function(surface, limit, area)
+		filter.limit = limit
+		filter.area = area
+		return surface.find_tiles_filtered(filter)
+	end
+
+	---@param surface LuaSurface
+	---@param limit number|nil
+	---@param area BoundingBox
+	---@return number
+	countTilesManMade = function(surface, limit, area)
+		filter.limit = limit
+		filter.area = area
+		return surface.count_tiles_filtered(filter)
+	end
+end
+
+local getTilesUpgradeable, countTilesUpgradeable
+do
+	---@type TileSearchFilters
+	local filter = {
+		has_tile_ghost = false,
+		to_be_deconstructed = false,
 		collision_mask = MASK_GROUND_TILE,
 	}
-	getUpgradeFilter = function(area, tiles, bots)
+
+	---@param surface LuaSurface
+	---@param limit number|nil
+	---@param area BoundingBox
+	---@param upgrade TileID[]
+	---@return LuaTile[]
+	getTilesUpgradeable = function(surface, limit, area, upgrade)
 		filter.area = area
-		filter.name = tiles
-		filter.limit = bots
-		return filter
+		filter.name = upgrade
+		filter.limit = limit
+		return surface.find_tiles_filtered(filter)
+	end
+
+	---@param surface LuaSurface
+	---@param limit number|nil
+	---@param area BoundingBox
+	---@param upgrade TileID[]
+	---@return number
+	countTilesUpgradeable = function(surface, limit, area, upgrade)
+		filter.area = area
+		filter.name = upgrade
+		filter.limit = limit
+		return surface.count_tiles_filtered(filter)
 	end
 end
 
@@ -174,27 +310,15 @@ end
 
 ---@param roboport LuaEntity
 ---@param area BoundingBox
----@return number, number
-local function getPotentialExpansionsAndUpgrades(roboport, area)
-	local expansionFilter = {
-		has_hidden_tile = false,
-		collision_mask = MASK_GROUND_TILE,
-		area = area,
-	}
-	local possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
+---@return number, number, number
+local function getPotentialJobs(roboport, area)
+	local possibleExpansions = countTilesNatural(roboport.surface, nil, area)
 	if possibleExpansions == 0 then
-		expansionFilter.has_hidden_tile = true
-		expansionFilter.name = TYPE_LANDFILL
-		possibleExpansions = roboport.surface.count_tiles_filtered(expansionFilter)
+		possibleExpansions = countTilesManMade(roboport.surface, nil, area)
 	end
-
-	local possibleUpgrades = roboport.surface.count_tiles_filtered({
-		collision_mask = MASK_GROUND_TILE,
-		name = { TYPE_PATH, TYPE_CONCRETE, },
-		area = area,
-	})
-
-	return possibleExpansions, possibleUpgrades
+	return possibleExpansions,
+		countTilesUpgradeable(roboport.surface, nil, area, UPGRADEABLE_PAVEMENTS),
+		countClearableEntities(roboport.surface, area)
 end
 
 -- So when you're creating a new network;
@@ -226,8 +350,8 @@ local function addPorts(...)
 					{ roboport.position.x - max, roboport.position.y - max, },
 					{ roboport.position.x + max, roboport.position.y + max, },
 				}
-				local possibleExpansions, possibleUpgrades = getPotentialExpansionsAndUpgrades(roboport, maxArea)
-				if possibleExpansions > 0 or possibleUpgrades > 0 then
+				local possibleExpansions, possibleUpgrades, possibleTidying = getPotentialJobs(roboport, maxArea)
+				if possibleExpansions > 0 or possibleUpgrades > 0 or possibleTidying > 0 then
 					local nid = roboport.logistic_cell.logistic_network.network_id
 					local net = getTidyNetworkByNID(nid, roboport.surface, roboport.force)
 
@@ -321,24 +445,19 @@ end
 ---@param tidy boolean
 ---@return boolean
 local function tidyExpand(net, area, tidy)
-	local virginFilter = getVirginFilter(net.bots, area)
-	local virgins = net.surface.find_tiles_filtered(virginFilter)
-
-	if #virgins == 0 then
-		virginFilter.has_hidden_tile = true
-		virginFilter.name = "landfill"
-		virgins = net.surface.find_tiles_filtered(virginFilter)
+	local tiles = getTilesNatural(net.surface, net.bots, area)
+	if #tiles == 0 then
+		tiles = getTilesManMade(net.surface, net.bots, area)
 	end
 
 	local used = 0
-	for _, tile in next, virgins do
+	for _, tile in next, tiles do
 		used = used + attemptBuild(net, tile.position, TYPE_REFINED, TYPE_CONCRETE, TYPE_BRICK)
 		if net.bots < 1 then return used > 0 end
 	end
 
 	if tidy then
-		FIND_FILTER_CLEAR.area = area
-		for _, clear in next, net.surface.find_entities_filtered(FIND_FILTER_CLEAR) do
+		for _, clear in next, getClearableEntities(net.surface, area) do
 			if not clear.to_be_deconstructed() and (clear.type ~= TYPE_CLIFF or net.items[TYPE_EXPLOSIVES] > 0) then
 				clear.order_deconstruction(net.force)
 				used = used + 1
@@ -512,12 +631,12 @@ local function tidypls()
 											})
 										end
 										if ghosts[port.roboport] == 0 then
-											local upgradeFilter = getUpgradeFilter(
+											local upgrades = getTilesUpgradeable(
+												net.surface,
+												math.min(max, net.bots),
 												port.upgradeArea,
-												upgradeTargets,
-												math.min(max, net.bots)
+												upgradeTargets
 											)
-											local upgrades = net.surface.find_tiles_filtered(upgradeFilter)
 											if #upgrades == 0 then
 												port.doneUpgrading = true
 											else
@@ -671,9 +790,8 @@ script.on_event(defines.events.on_research_finished, function(event)
 				{ port.position.x - max, port.position.y - max, },
 				{ port.position.x + max, port.position.y + max, },
 			}
-			-- XXX This doesn't account for debris/cliffs that need to be cleared
-			local exp, ups = getPotentialExpansionsAndUpgrades(port, area)
-			if exp ~= 0 or ups ~= 0 then
+			local exp, ups, tidyings = getPotentialJobs(port, area)
+			if exp ~= 0 or ups ~= 0 or tidyings ~= 0 then
 				-- Clear first because addPorts checks validPort, which checks .forget
 				storage.forget[port] = nil
 				addPorts(port)
@@ -694,9 +812,26 @@ script.on_event(defines.events.on_research_finished, function(event)
 					{ port.roboport.position.x - port.maxRadius, port.roboport.position.y - port.maxRadius, },
 					{ port.roboport.position.x + port.maxRadius, port.roboport.position.y + port.maxRadius, },
 				}
-				local exp, ups = getPotentialExpansionsAndUpgrades(port.roboport, port.upgradeArea)
+				local exp, ups, tidyings = getPotentialJobs(port.roboport, port.upgradeArea)
 				port.doneExpanding = (exp == 0)
-				port.doneUpgrading = (ups == 0)
+				port.doneUpgrading = (ups == 0) and (tidyings == 0) -- XXX double check
+			end
+		end
+	end
+
+	-- Fifth, find any roboports in the networks that we've missed for some reason
+	for _, net in next, storage.networks do
+		local port = net.ports[1]
+		if port then
+			local rp = port.roboport
+			if rp and rp.valid and rp.logistic_network then
+				local ln = rp.logistic_network
+				local ports = {}
+				for _, cell in next, ln.cells do
+					table.insert(ports, cell.owner)
+				end
+				-- addPorts checks storage.forget and valid and so forth, so just add indiscriminately
+				addPorts(table.unpack(ports))
 			end
 		end
 	end
