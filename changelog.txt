@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.4
+Date: 2025-02-01
+  Changes:
+    - Hopefully works without Space Age expansion, only tested loading a new game without roboports.
+
+---------------------------------------------------------------------------------------------------
 Version: 0.2.3
 Date: 2024-12-25
   Changes:

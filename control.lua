@@ -41,6 +41,8 @@ local TYPE_CLIFF = "cliff"
 local TYPE_TREE = "tree"
 local TYPE_SIMPLE = "simple-entity"
 local TYPE_LANDFILL = "landfill"
+local TYPE_ICE_PLATFORM = "ice-platform"
+local TYPE_FOUNDATION = "foundation"
 
 local TYPE_ROBOPORT = "roboport"
 local FIND_FILTER = { type = TYPE_ROBOPORT, }
@@ -156,6 +158,7 @@ do
 					table.insert(filter.name, name)
 				end
 			end
+			-- XXX
 			print(serpent.block(filter.name))
 		end
 
@@ -179,6 +182,7 @@ do
 					table.insert(filter.name, name)
 				end
 			end
+			-- XXX
 			print(serpent.block(filter.name))
 		end
 
@@ -192,20 +196,28 @@ end
 local getTilesManMade, countTilesManMade
 do
 	---@type TileSearchFilters
-	local filter = {
-		--has_hidden_tile = true,
-		has_tile_ghost = false,
-		to_be_deconstructed = false,
-		collision_mask = MASK_GROUND_TILE,
-		-- XXX We should generate this from the prototype data
-		name = { TYPE_LANDFILL, "ice-platform", "foundation", },
-	}
+	local filter
 
 	---@param surface LuaSurface
 	---@param limit number|nil
 	---@param area BoundingBox
 	---@return LuaTile[]
 	getTilesManMade = function(surface, limit, area)
+		if not filter then
+			filter = {
+				--has_hidden_tile = true,
+				has_tile_ghost = false,
+				to_be_deconstructed = false,
+				collision_mask = MASK_GROUND_TILE,
+			}
+
+			-- XXX We should generate this from the prototype data
+			if script.active_mods["space-age"] then
+				filter.name = { TYPE_LANDFILL, TYPE_ICE_PLATFORM, TYPE_FOUNDATION, }
+			else
+				filter.name = TYPE_LANDFILL
+			end
+		end
 		filter.limit = limit
 		filter.area = area
 		return surface.find_tiles_filtered(filter)
@@ -216,6 +228,21 @@ do
 	---@param area BoundingBox
 	---@return number
 	countTilesManMade = function(surface, limit, area)
+		if not filter then
+			filter = {
+				--has_hidden_tile = true,
+				has_tile_ghost = false,
+				to_be_deconstructed = false,
+				collision_mask = MASK_GROUND_TILE,
+			}
+
+			-- XXX We should generate this from the prototype data
+			if script.active_mods["space-age"] then
+				filter.name = { TYPE_LANDFILL, TYPE_ICE_PLATFORM, TYPE_FOUNDATION, }
+			else
+				filter.name = TYPE_LANDFILL
+			end
+		end
 		filter.limit = limit
 		filter.area = area
 		return surface.count_tiles_filtered(filter)
