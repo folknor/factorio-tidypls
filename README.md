@@ -16,9 +16,13 @@ Please check out [my other addons](https://mods.factorio.com/user/folk) as well!
 
 I also recommend the mod [Clean Floor](https://mods.factorio.com/mod/CleanFloor) by Skrundz alongside Tidy Pls!. It will remove any decorations below paved areas (grass that would stick out from the concrete, etc).
 
+## Warnings (actually the opposite of warnings - notices?)
+
 Please be aware that if your defensive perimiter depends on cliffs, activating this mod might result in the cliffs being removed at some point (if there are construction areas from roboports that extend over them, and if the logistic network contains more than 100 cliff explosives)!
 
 Also note that I have tested it, and Demolishers on Vulcanus do not react to paving :-)
+
+And finally, it won't pave over the good soils on Gleba. It will however pave over many (but not the most fruitful ones) of the types that you can put artificial soil on. So once you need to you just deconstruct that pavement and put down artificial soil (which will then not be paved over).
 
 ## Key differences
 

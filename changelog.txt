@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 0.2.5
+Date: 2025-03-14
+  Changes:
+    - Tiny bugfix for a bug that noone noticed
+    - Removed debug print
+    - No longer scans all roboports in the universe when a tech is researched
+
+---------------------------------------------------------------------------------------------------
 Version: 0.2.4
 Date: 2025-02-01
   Changes:

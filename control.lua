@@ -143,24 +143,24 @@ do
 		-- ZZZ Unfortunately, invert also inverts collision_mask and potentially some of the other properties
 	}
 
+	local function generateTileFilter()
+		local protos = prototypes.get_tile_filtered({
+			{ filter = "item-to-place",  invert = true,               mode = "and", },
+			{ filter = "collision-mask", mask_mode = "layers-equals", mask = "ground_tile", mode = "and", },
+		})
+		for name in pairs(protos) do
+			if not IGNORE_TILES[name] then
+				table.insert(filter.name, name)
+			end
+		end
+	end
+
 	---@param surface LuaSurface
 	---@param limit number|nil
 	---@param area BoundingBox
 	---@return LuaTile[]
 	getTilesNatural = function(surface, limit, area)
-		if #filter.name == 0 then
-			local protos = prototypes.get_tile_filtered({
-				{ filter = "item-to-place",  invert = true,               mode = "and", },
-				{ filter = "collision-mask", mask_mode = "layers-equals", mask = "ground_tile", mode = "and", },
-			})
-			for name in pairs(protos) do
-				if not IGNORE_TILES[name] then
-					table.insert(filter.name, name)
-				end
-			end
-			-- XXX
-			print(serpent.block(filter.name))
-		end
+		if #filter.name == 0 then generateTileFilter() end
 
 		filter.limit = limit
 		filter.area = area
@@ -172,19 +172,7 @@ do
 	---@param area BoundingBox
 	---@return number
 	countTilesNatural = function(surface, limit, area)
-		if #filter.name == 0 then
-			local protos = prototypes.get_tile_filtered({
-				{ filter = "item-to-place",  invert = true,               mode = "and", },
-				{ filter = "collision-mask", mask_mode = "layers-equals", mask = "ground_tile", mode = "and", },
-			})
-			for name in pairs(protos) do
-				if not IGNORE_TILES[name] then
-					table.insert(filter.name, name)
-				end
-			end
-			-- XXX
-			print(serpent.block(filter.name))
-		end
+		if #filter.name == 0 then generateTileFilter() end
 
 		filter.limit = limit
 		filter.area = area
@@ -198,26 +186,29 @@ do
 	---@type TileSearchFilters
 	local filter
 
+	local function generateTileFilter()
+		filter = {
+			--has_hidden_tile = true,
+			has_tile_ghost = false,
+			to_be_deconstructed = false,
+			collision_mask = MASK_GROUND_TILE,
+		}
+
+		-- XXX We should generate this from the prototype data
+		if script.active_mods["space-age"] then
+			filter.name = { TYPE_LANDFILL, TYPE_ICE_PLATFORM, TYPE_FOUNDATION, }
+		else
+			filter.name = TYPE_LANDFILL
+		end
+	end
+
 	---@param surface LuaSurface
 	---@param limit number|nil
 	---@param area BoundingBox
 	---@return LuaTile[]
 	getTilesManMade = function(surface, limit, area)
-		if not filter then
-			filter = {
-				--has_hidden_tile = true,
-				has_tile_ghost = false,
-				to_be_deconstructed = false,
-				collision_mask = MASK_GROUND_TILE,
-			}
+		if not filter then generateTileFilter() end
 
-			-- XXX We should generate this from the prototype data
-			if script.active_mods["space-age"] then
-				filter.name = { TYPE_LANDFILL, TYPE_ICE_PLATFORM, TYPE_FOUNDATION, }
-			else
-				filter.name = TYPE_LANDFILL
-			end
-		end
 		filter.limit = limit
 		filter.area = area
 		return surface.find_tiles_filtered(filter)
@@ -228,21 +219,8 @@ do
 	---@param area BoundingBox
 	---@return number
 	countTilesManMade = function(surface, limit, area)
-		if not filter then
-			filter = {
-				--has_hidden_tile = true,
-				has_tile_ghost = false,
-				to_be_deconstructed = false,
-				collision_mask = MASK_GROUND_TILE,
-			}
+		if not filter then generateTileFilter() end
 
-			-- XXX We should generate this from the prototype data
-			if script.active_mods["space-age"] then
-				filter.name = { TYPE_LANDFILL, TYPE_ICE_PLATFORM, TYPE_FOUNDATION, }
-			else
-				filter.name = TYPE_LANDFILL
-			end
-		end
 		filter.limit = limit
 		filter.area = area
 		return surface.count_tiles_filtered(filter)
@@ -798,7 +776,7 @@ script.on_event(defines.events.on_research_finished, function(event)
 	-- Second, nuke all empty or invalid nets
 	for i = #storage.networks, 1, -1 do
 		local net = storage.networks[i]
-		if net.ports == 0 or not net.force or not net.force.valid or not net.surface or not net.surface.valid then
+		if #net.ports == 0 or not net.force or not net.force.valid or not net.surface or not net.surface.valid then
 			-- But preserve all valid roboports. Not sure if there can ever be any though
 			for _, port in next, net.ports do
 				if port.roboport and port.roboport.valid then
@@ -847,19 +825,20 @@ script.on_event(defines.events.on_research_finished, function(event)
 	end
 
 	-- Fifth, find any roboports in the networks that we've missed for some reason
-	for _, net in next, storage.networks do
-		local port = net.ports[1]
-		if port then
-			local rp = port.roboport
-			if rp and rp.valid and rp.logistic_network then
-				local ln = rp.logistic_network
-				local ports = {}
-				for _, cell in next, ln.cells do
-					table.insert(ports, cell.owner)
-				end
-				-- addPorts checks storage.forget and valid and so forth, so just add indiscriminately
-				addPorts(table.unpack(ports))
-			end
-		end
-	end
+	-- XXX This takes way too much processing, and I'm not even sure if it's necessary.
+	-- for _, net in next, storage.networks do
+	-- 	local port = net.ports[1]
+	-- 	if port then
+	-- 		local rp = port.roboport
+	-- 		if rp and rp.valid and rp.logistic_network then
+	-- 			local ln = rp.logistic_network
+	-- 			local ports = {}
+	-- 			for _, cell in next, ln.cells do
+	-- 				table.insert(ports, cell.owner)
+	-- 			end
+	-- 			-- addPorts checks storage.forget and valid and so forth, so just add indiscriminately
+	-- 			addPorts(table.unpack(ports))
+	-- 		end
+	-- 	end
+	-- end
 end)
