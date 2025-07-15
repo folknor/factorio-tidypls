@@ -562,7 +562,7 @@ local function tidypls()
 			if available > 0 and available >= minimum and researched and enabled then
 				local any = false
 
-				net.bots = available
+				net.bots = math.min(available, minimum)
 
 				for _, item in next, countItems do
 					local c = first.logistic_network.get_item_count(item) - 100
