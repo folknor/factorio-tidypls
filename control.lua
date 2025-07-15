@@ -19,7 +19,7 @@ local LOG_NETWORK = "Processing network: %d"
 local LOG_NO_PORTS = "Network %d has no valid roboports or is otherwise invalid."
 local LOG_NUMPORTS = " - Available roboports: %d"
 local LOG_SURFACE = " - Surface: %s#%d"
-local LOG_NUMBOTS = " - Available bots: %d"
+local LOG_NUMBOTS = " - Available bots: %d, minimum %d"
 local LOG_ITEMCOUNT = " - Item: %s: %d"
 local LOG_RADIUS_INCREASED = " - Roboport radius increased: %s"
 local LOG_DONE_EXPANDING = " - Roboport done expanding: %s"
@@ -552,16 +552,17 @@ local function tidypls()
 			end
 
 			local first = net.ports[1].roboport
-			local available = first.logistic_network.available_construction_robots
-			local total = first.logistic_network.all_construction_robots
-			if (available / total) < 0.1 then break end
-
 			log(LOG_SURFACE, first.surface.name, first.surface.index)
-			net.bots = math.floor(total * 0.1)
-			log(LOG_NUMBOTS, net.bots)
 
-			if net.bots > 0 and researched and enabled then
+			local available = first.logistic_network.available_construction_robots
+			local minimum = math.floor(first.logistic_network.all_construction_robots * 0.1)
+
+			log(LOG_NUMBOTS, available, minimum)
+
+			if available > 0 and available >= minimum and researched and enabled then
 				local any = false
+
+				net.bots = available
 
 				for _, item in next, countItems do
 					local c = first.logistic_network.get_item_count(item) - 100
