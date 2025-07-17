@@ -11,8 +11,8 @@
 --
 -- COME AT ME lulz
 
-local DEBUG_LOG = false
-local INTERVAL = 30 * 60
+local DEBUG_LOG = true
+local INTERVAL = 5 * 60
 
 local LOG_INIT = "Tidying pls."
 local LOG_NETWORK = "Processing network: %d"
@@ -85,6 +85,7 @@ local C_TECH_ENABLE = "folk-tidypls"
 ---@field surface LuaSurface
 ---@field ports TidyPort[]
 ---@field items { [string]: number }
+---@field totalPavementItems number
 ---@field bots number
 
 ---@class storage
@@ -305,6 +306,7 @@ local function getTidyNetworkByNID(nid, surface, force)
 			ports = {},
 			items = {},
 			bots = 0,
+			totalPavementItems = 0,
 			capacity = force.worker_robots_storage_bonus + 1,
 		}
 		table.insert(nets, skynet)
@@ -430,18 +432,17 @@ do
 	---@param position MapPosition
 	---@param ... string
 	attemptBuild = function(net, position, ...)
-		local used = 0
 		for i = 1, select("#", ...) do
 			local item = (select(i, ...))
 			if net.items[item] > 0 then
-				local usedNow = build(net, item, position)
-				used = used + usedNow
-				net.bots = net.bots - usedNow
-				net.items[item] = net.items[item] - math.ceil(usedNow)
+				local used = math.ceil(build(net, item, position))
+				net.bots = net.bots - used
+				net.items[item] = net.items[item] - used
+				net.totalPavementItems = net.totalPavementItems - used
 				return used
 			end
 		end
-		return used
+		return 0
 	end
 end
 
@@ -504,8 +505,6 @@ local function tidypls()
 
 	---@type { [LuaEntity]: boolean }
 	local expanded = {}
-	---@type { [LuaEntity]: boolean }
-	local upgraded = {}
 	---@type { [LuaEntity]: number }
 	local ghosts = {}
 
@@ -563,10 +562,14 @@ local function tidypls()
 				local any = false
 
 				net.bots = math.min(available, minimum)
+				net.totalPavementItems = 0
 
 				for _, item in next, countItems do
 					local c = first.logistic_network.get_item_count(item) - 100
 					net.items[item.name] = c
+					if ITEM_TO_TILE[item.name] then
+						net.totalPavementItems = net.totalPavementItems + c
+					end
 					log(LOG_ITEMCOUNT, item.name, c)
 					if c > 0 then any = true end
 				end
@@ -615,70 +618,63 @@ local function tidypls()
 							end
 						end
 						if net.bots < 1 then break end
+						if net.totalPavementItems < 1 then break end
 					end
 
-					if net.bots > 0 then
+					if net.bots > 0 and net.totalPavementItems > 0 then
 						-- We've expanded, now see if we can upgrade
 						local upgradeTargets = recalcUpgradeTargets(net)
-
-						for _, port in next, net.ports do
-							if not port.doneUpgrading and not expanded[port.roboport] and port.maxEnergy == port.roboport.energy then
-								if #upgradeTargets > 0 then
-									local max = math.max(net.items[TYPE_CONCRETE], net.items[TYPE_REFINED], 0)
-									if max > 0 then
-										-- We dont need to recheck this because expanded[] will fail
-										-- for those ports that built anything
-										if not ghosts[port.roboport] then
-											ghosts[port.roboport] = net.surface.count_entities_filtered({
-												area = port.upgradeArea,
-												name = TYPE_TILE_GHOST,
-												force = port.roboport.force,
-												limit = 1,
-											})
-										end
-										if ghosts[port.roboport] == 0 then
-											local upgrades = getTilesUpgradeable(
-												net.surface,
-												math.min(max, net.bots),
-												port.upgradeArea,
-												upgradeTargets
-											)
-											if #upgrades == 0 then
-												port.doneUpgrading = true
-											else
-												local used = 0
-												for _, tile in next, upgrades do
-													used = used +
-														attemptBuild(
-															net,
-															tile.position,
-															TYPE_REFINED,
-															TYPE_CONCRETE
-														)
-													if net.bots < 1 or (net.items[TYPE_REFINED] < 1 and net.items[TYPE_CONCRETE] < 1) then
-														break
-													end
-												end
-												upgraded[port.roboport] = used > 0
+						if #upgradeTargets > 0 then
+							for _, port in next, net.ports do
+								if not port.doneUpgrading and not expanded[port.roboport] and port.maxEnergy == port.roboport.energy then
+									-- We dont need to recheck this because expanded[] will fail
+									-- for those ports that built anything
+									if not ghosts[port.roboport] then
+										ghosts[port.roboport] = net.surface.count_entities_filtered({
+											area = port.upgradeArea,
+											name = TYPE_TILE_GHOST,
+											force = port.roboport.force,
+											limit = 1,
+										})
+									end
+									if ghosts[port.roboport] == 0 then
+										local upgrades = getTilesUpgradeable(
+											net.surface,
+											math.min(
+												math.max(net.items[TYPE_CONCRETE], net.items[TYPE_REFINED], 0),
+												net.bots
+											),
+											port.upgradeArea,
+											upgradeTargets
+										)
+										if #upgrades == 0 then
+											port.doneUpgrading = true
+										else
+											local used = 0
+											for _, tile in next, upgrades do
+												used = used +
+													attemptBuild(
+														net,
+														tile.position,
+														TYPE_REFINED,
+														TYPE_CONCRETE
+													)
+												if net.bots < 1 then break end
 											end
-
-											if upgraded[port.roboport] then
+											if used > 0 then
 												log(LOG_UPGRADED, port.roboport.backer_name, net.bots)
 												upgradeTargets = recalcUpgradeTargets(net)
-												if #upgradeTargets == 0 then break end
 											end
 										end
-										if net.bots < 1 then break end
-									else
-										break
 									end
-								else
+								end
+								if port.doneExpanding and port.doneUpgrading then
+									log(LOG_DONE, port.roboport.backer_name)
+									storage.forget[port.roboport] = true
+								end
+								if net.bots < 1 or #upgradeTargets == 0 or (net.items[TYPE_REFINED] < 1 and net.items[TYPE_CONCRETE] < 1) then
 									break
 								end
-							end
-							if port.doneExpanding and port.doneUpgrading then
-								log(LOG_DONE, port.roboport.backer_name)
-								storage.forget[port.roboport] = true
 							end
 						end
 					end
