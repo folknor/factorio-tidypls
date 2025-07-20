@@ -11,8 +11,8 @@
 --
 -- COME AT ME lulz
 
-local DEBUG_LOG = true
-local INTERVAL = 5 * 60
+local DEBUG_LOG = true  -- XXX
+local INTERVAL = 5 * 60 -- XXX
 
 local LOG_INIT = "Tidying pls."
 local LOG_NETWORK = "Processing network: %d"
@@ -496,12 +496,191 @@ local function recalcUpgradeTargets(net)
 	return ret
 end
 
+---@param net TidyNetwork
+local function validatePortsAndNetworks(net)
+	for i = #net.ports, 1, -1 do
+		if not validPort(net.ports[i].roboport) or net.ports[i].roboport.logistic_network.network_id ~= net.id then
+			local rp = net.ports[i].roboport
+			table.remove(net.ports, i)
+			if rp and rp.valid then
+				if rp.logistic_cell and rp.logistic_cell.valid and #rp.logistic_cell.neighbours > 0 then
+					-- Adopt into neighbouring network
+					addPorts(rp)
+				else
+					-- Recheck this port later
+					storage.forget[rp] = true
+				end
+			end
+		end
+	end
+end
+
+---@param net TidyNetwork
+local function recalculateAvailableBots(net)
+	local first = net.ports[1].roboport
+	log(LOG_SURFACE, first.surface.name, first.surface.index)
+
+	local available = first.logistic_network.available_construction_robots
+	local minimum = math.floor(first.logistic_network.all_construction_robots * 0.1)
+
+	log(LOG_NUMBOTS, available, minimum)
+	if available > 0 and available >= minimum then
+		net.bots = math.min(available, minimum)
+	else
+		net.bots = 0
+	end
+end
+
+---@param net TidyNetwork
+local function recalculateAvailableItems(net)
+	local any = false
+	net.totalPavementItems = 0
+	for _, item in next, countItems do
+		local c = net.ports[1].roboport.logistic_network.get_item_count(item) - 100
+		net.items[item.name] = c
+		if ITEM_TO_TILE[item.name] then
+			net.totalPavementItems = net.totalPavementItems + c
+		end
+		log(LOG_ITEMCOUNT, item.name, c)
+		if c > 0 then any = true end
+	end
+	return any
+end
+
+---@param net TidyNetwork
+local function isResearched(net)
+	return net.force.technologies[C_TECH_ENABLE] and
+		net.force.technologies[C_TECH_ENABLE].researched
+end
+
+---@param net TidyNetwork
+local function isEnabled(net)
+	local enabled = false
+	for _, player in pairs(game.players) do
+		if player.force == net.force then
+			enabled = player.is_shortcut_toggled(C_LUA_EVENT)
+			break
+		end
+	end
+	if not enabled then
+		log(LOG_DISABLED)
+	end
+	return enabled
+end
+
+---@param net TidyNetwork
+---@param ghosts { [LuaEntity]: number }
+---@param expanded { [LuaEntity]: boolean }
+local function performExpansion(net, ghosts, expanded)
+	for _, port in next, net.ports do
+		if not port.doneExpanding and port.maxEnergy == port.roboport.energy then
+			local roboport = port.roboport
+			-- Dont do anything if there's any ghosts in the build area
+			if not ghosts[roboport] then
+				ghosts[roboport] = net.surface.count_entities_filtered({
+					area = port.buildArea,
+					name = TYPE_TILE_GHOST,
+					force = roboport.force,
+					limit = 1,
+				})
+			end
+			if ghosts[roboport] == 0 then
+				expanded[roboport] = tidyExpand(net, port.buildArea, port.radius < port.maxRadius)
+
+				if not expanded[roboport] then
+					if port.radius < port.maxRadius then
+						log(LOG_RADIUS_INCREASED, roboport.backer_name)
+						port.radius = port.radius + 1
+						port.buildArea = {
+							{ roboport.position.x - port.radius, roboport.position.y - port.radius, },
+							{ roboport.position.x + port.radius, roboport.position.y + port.radius, },
+						}
+						-- Dont upgrade around this roboport.
+						-- The mod has probably been added to the game mid-run
+						expanded[roboport] = true
+					else
+						-- Roboport is done expanding.
+						port.doneExpanding = true
+						log(LOG_DONE_EXPANDING, roboport.backer_name)
+					end
+				else
+					log(LOG_EXPANDED, roboport.backer_name, net.bots)
+				end
+			end
+		end
+		if net.bots < 1 or net.totalPavementItems < 1 then break end
+	end
+end
+
+---@param net TidyNetwork
+---@param ghosts { [LuaEntity]: number }
+---@param expanded { [LuaEntity]: boolean }
+local function performUpgrades(net, ghosts, expanded)
+	-- We've expanded, now see if we can upgrade
+	local upgradeTargets = recalcUpgradeTargets(net)
+	if #upgradeTargets > 0 then
+		for _, port in next, net.ports do
+			if not port.doneUpgrading and not expanded[port.roboport] and port.maxEnergy == port.roboport.energy then
+				-- We dont need to recheck this because expanded[] will fail
+				-- for those ports that built anything
+				if not ghosts[port.roboport] then
+					ghosts[port.roboport] = net.surface.count_entities_filtered({
+						area = port.upgradeArea,
+						name = TYPE_TILE_GHOST,
+						force = port.roboport.force,
+						limit = 1,
+					})
+				end
+				if ghosts[port.roboport] == 0 then
+					local upgrades = getTilesUpgradeable(
+						net.surface,
+						math.min(
+							math.max(net.items[TYPE_CONCRETE], net.items[TYPE_REFINED], 0),
+							net.bots
+						),
+						port.upgradeArea,
+						upgradeTargets
+					)
+					if #upgrades == 0 then
+						port.doneUpgrading = true
+					else
+						local used = 0
+						for _, tile in next, upgrades do
+							used = used +
+								attemptBuild(
+									net,
+									tile.position,
+									TYPE_REFINED,
+									TYPE_CONCRETE
+								)
+							if net.bots < 1 then break end
+						end
+						if used > 0 then
+							log(LOG_UPGRADED, port.roboport.backer_name, net.bots)
+							upgradeTargets = recalcUpgradeTargets(net)
+						end
+					end
+				end
+			end
+			if port.doneExpanding and port.doneUpgrading then
+				log(LOG_DONE, port.roboport.backer_name)
+				storage.forget[port.roboport] = true
+			end
+			if net.bots < 1 or #upgradeTargets == 0 or (net.items[TYPE_REFINED] < 1 and net.items[TYPE_CONCRETE] < 1) then
+				break
+			end
+		end
+	end
+end
+
+---@param net TidyNetwork
+local function isInvalidNetwork(net)
+	return #net.ports == 0 or not net.force or not net.force.valid or not net.surface or not net.surface.valid
+end
+
 local function tidypls()
 	if not storage.networks then initTidyPls() end
 	if #storage.networks == 0 then findPorts() end
-
-	---@type TidyNetwork[]
-	local nets = storage.networks
 
 	---@type { [LuaEntity]: boolean }
 	local expanded = {}
@@ -510,70 +689,22 @@ local function tidypls()
 
 	log(LOG_INIT)
 
-	for j = #nets, 1, -1 do
-		local net = nets[j]
+	for j = #storage.networks, 1, -1 do
+		local net = storage.networks[j]
 		log(LOG_NETWORK, net.id)
 
-		for i = #net.ports, 1, -1 do
-			if not validPort(net.ports[i].roboport) or net.ports[i].roboport.logistic_network.network_id ~= net.id then
-				local rp = net.ports[i].roboport
-				table.remove(net.ports, i)
-				if rp and rp.valid then
-					if rp.logistic_cell and rp.logistic_cell.valid and #rp.logistic_cell.neighbours > 0 then
-						-- Adopt into neighbouring network
-						addPorts(rp)
-					else
-						-- Recheck this port later
-						storage.forget[rp] = true
-					end
-				end
-			end
-		end
+		validatePortsAndNetworks(net)
 
-		if #net.ports == 0 or not net.force or not net.force.valid or not net.surface or not net.surface.valid then
+		if isInvalidNetwork(net) then
 			log(LOG_NO_PORTS, net.id)
-			table.remove(nets, j)
+			table.remove(storage.networks, j)
 		else
 			log(LOG_NUMPORTS, #net.ports)
 
-			local researched = net.force.technologies[C_TECH_ENABLE] and
-				net.force.technologies[C_TECH_ENABLE].researched
+			recalculateAvailableBots(net)
 
-			local enabled = false
-			for _, player in pairs(game.players) do
-				if player.force == net.force then
-					enabled = player.is_shortcut_toggled(C_LUA_EVENT)
-					break
-				end
-			end
-			if not enabled then
-				log(LOG_DISABLED)
-			end
-
-			local first = net.ports[1].roboport
-			log(LOG_SURFACE, first.surface.name, first.surface.index)
-
-			local available = first.logistic_network.available_construction_robots
-			local minimum = math.floor(first.logistic_network.all_construction_robots * 0.1)
-
-			log(LOG_NUMBOTS, available, minimum)
-
-			if available > 0 and available >= minimum and researched and enabled then
-				local any = false
-
-				net.bots = math.min(available, minimum)
-				net.totalPavementItems = 0
-
-				for _, item in next, countItems do
-					local c = first.logistic_network.get_item_count(item) - 100
-					net.items[item.name] = c
-					if ITEM_TO_TILE[item.name] then
-						net.totalPavementItems = net.totalPavementItems + c
-					end
-					log(LOG_ITEMCOUNT, item.name, c)
-					if c > 0 then any = true end
-				end
-
+			if net.bots > 0 and isResearched(net) and isEnabled(net) then
+				local any = recalculateAvailableItems(net)
 				if any then
 					-- utoxin pls what is this
 					if net.force.max_successful_attempts_per_tick_per_construction_queue * 60 < net.bots then
@@ -581,102 +712,10 @@ local function tidypls()
 					end
 
 					-- First check if we can expand at all
-					for _, port in next, net.ports do
-						if not port.doneExpanding and port.maxEnergy == port.roboport.energy then
-							local roboport = port.roboport
-							-- Dont do anything if there's any ghosts in the build area
-							if not ghosts[roboport] then
-								ghosts[roboport] = net.surface.count_entities_filtered({
-									area = port.buildArea,
-									name = TYPE_TILE_GHOST,
-									force = roboport.force,
-									limit = 1,
-								})
-							end
-							if ghosts[roboport] == 0 then
-								expanded[roboport] = tidyExpand(net, port.buildArea, port.radius < port.maxRadius)
-
-								if not expanded[roboport] then
-									if port.radius < port.maxRadius then
-										log(LOG_RADIUS_INCREASED, roboport.backer_name)
-										port.radius = port.radius + 1
-										port.buildArea = {
-											{ roboport.position.x - port.radius, roboport.position.y - port.radius, },
-											{ roboport.position.x + port.radius, roboport.position.y + port.radius, },
-										}
-										-- Dont upgrade around this roboport.
-										-- The mod has probably been added to the game mid-run
-										expanded[roboport] = true
-									else
-										-- Roboport is done expanding.
-										port.doneExpanding = true
-										log(LOG_DONE_EXPANDING, roboport.backer_name)
-									end
-								else
-									log(LOG_EXPANDED, roboport.backer_name, net.bots)
-								end
-							end
-						end
-						if net.bots < 1 then break end
-						if net.totalPavementItems < 1 then break end
-					end
+					performExpansion(net, ghosts, expanded)
 
 					if net.bots > 0 and net.totalPavementItems > 0 then
-						-- We've expanded, now see if we can upgrade
-						local upgradeTargets = recalcUpgradeTargets(net)
-						if #upgradeTargets > 0 then
-							for _, port in next, net.ports do
-								if not port.doneUpgrading and not expanded[port.roboport] and port.maxEnergy == port.roboport.energy then
-									-- We dont need to recheck this because expanded[] will fail
-									-- for those ports that built anything
-									if not ghosts[port.roboport] then
-										ghosts[port.roboport] = net.surface.count_entities_filtered({
-											area = port.upgradeArea,
-											name = TYPE_TILE_GHOST,
-											force = port.roboport.force,
-											limit = 1,
-										})
-									end
-									if ghosts[port.roboport] == 0 then
-										local upgrades = getTilesUpgradeable(
-											net.surface,
-											math.min(
-												math.max(net.items[TYPE_CONCRETE], net.items[TYPE_REFINED], 0),
-												net.bots
-											),
-											port.upgradeArea,
-											upgradeTargets
-										)
-										if #upgrades == 0 then
-											port.doneUpgrading = true
-										else
-											local used = 0
-											for _, tile in next, upgrades do
-												used = used +
-													attemptBuild(
-														net,
-														tile.position,
-														TYPE_REFINED,
-														TYPE_CONCRETE
-													)
-												if net.bots < 1 then break end
-											end
-											if used > 0 then
-												log(LOG_UPGRADED, port.roboport.backer_name, net.bots)
-												upgradeTargets = recalcUpgradeTargets(net)
-											end
-										end
-									end
-								end
-								if port.doneExpanding and port.doneUpgrading then
-									log(LOG_DONE, port.roboport.backer_name)
-									storage.forget[port.roboport] = true
-								end
-								if net.bots < 1 or #upgradeTargets == 0 or (net.items[TYPE_REFINED] < 1 and net.items[TYPE_CONCRETE] < 1) then
-									break
-								end
-							end
-						end
+						performUpgrades(net, ghosts, expanded)
 					end
 
 					-- Shufflefeet penguins
