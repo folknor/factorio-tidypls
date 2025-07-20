@@ -11,8 +11,8 @@
 --
 -- COME AT ME lulz
 
-local DEBUG_LOG = true  -- XXX
-local INTERVAL = 5 * 60 -- XXX
+local DEBUG_LOG = false
+local INTERVAL = 30 * 60
 
 local LOG_INIT = "Tidying pls."
 local LOG_NETWORK = "Processing network: %d"
