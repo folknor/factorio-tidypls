@@ -1,8 +1,10 @@
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.8
-Date: 1970-01-01
+Date: 2025-07-20
   Changes:
     - Restructured the code a bit to make the "main loop" easier to understand for others.
+    - Stop trying to expand or build anything if we run out of pavement items while processing.
+    - Also some general cleanup and tiny fixes.
 
 ---------------------------------------------------------------------------------------------------
 Version: 0.2.7
